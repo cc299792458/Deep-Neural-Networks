@@ -124,3 +124,5 @@ if __name__ == '__main__':
     model = UNet()
     print(model)
     print("Num params:", sum(p.numel() for p in model.parameters()))
+
+    
