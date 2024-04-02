@@ -11,41 +11,54 @@ from torchvision.transforms.functional import to_pil_image
 from torchvision.datasets import MNIST, CIFAR10
 from torch.utils.data import DataLoader
 
-from itertools import chain
+# from itertools import chain
 from tqdm import tqdm
 
 import os
 
 class AutoEncoder(nn.Module):
-    def __init__(self, feature_size, device='cpu', lr=1e-3, epochs=20) -> None:
+    def __init__(self, 
+                 feature_size: int,
+                 config: dict = None,
+                 device: str = 'cpu', 
+                 lr: float = 1e-3, 
+                 epochs: int = 20) -> None:
         super(AutoEncoder, self).__init__()
         self.device = device
         self.feature_size = feature_size
-        self.encoder = nn.Sequential(
-            nn.Linear(feature_size, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 16),
-            nn.ReLU(),
-            nn.Linear(16, 10),
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(10, 16),
-            nn.ReLU(),
-            nn.Linear(16, 32),
-            nn.ReLU(),
-            nn.Linear(32, 64),
-            nn.ReLU(),
-            nn.Linear(64, 128),
-            nn.ReLU(),
-            nn.Linear(128, feature_size),
-            nn.Sigmoid()
-        )
-        self.optimizer = optim.Adam(chain(self.encoder.parameters(), self.decoder.parameters()), lr=lr)
-        self.loss_function = nn.MSELoss()
+        self.config = {
+            'type': 'fc',
+            'latent_dim': 16,
+            'hidden_sizes': [128, 64, 32],
+            'channels': 1,
+            'image_size': 28,   # Default for MNIST
+            'encoder_hidden_channels': [16, 32],    # Used for CNN #
+            'encoder_kernel_sizes': [3, 3],
+            'encoder_strides': [2, 2],
+            'encoder_paddings': [1, 1],
+            'decoder_hidden_channels': [32, 16],    # Used for CNN #
+            'decoder_kernel_sizes': [3, 3],
+            'decoder_strides': [2, 2],
+            'decoder_paddings': [1, 1],
+            'decoder_output_paddings': [1, 1]
+        }
+
+        if config is not None:
+            self.config.update(config)
+
+        self.architecture_type = self.config.get('type', 'fc')
+
+        if self.architecture_type == 'fc':
+            self.encoder = self.create_fc_encoder()
+            self.decoder = self.create_fc_decoder()
+        elif self.architecture_type == 'cnn':
+            self.encoder = self.create_cnn_encoder()
+            self.decoder = self.create_cnn_decoder()
+        else:
+            raise ValueError("Unsupported architecture type")
+
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        # self.optimizer = optim.Adam(chain(self.encoder.parameters(), self.decoder.parameters()), lr=lr)
         self.epochs = epochs
 
     def forward(self, x):
@@ -54,12 +67,104 @@ class AutoEncoder(nn.Module):
 
         return output
     
+    @property
+    def loss_function(self):
+        return nn.MSELoss()
+    
+    def create_fc_encoder(self):
+        layers = []
+        input_size = self.feature_size
+        for hidden_size in self.config['hidden_sizes']:
+            layers.append(nn.Linear(input_size, hidden_size))
+            layers.append(nn.ReLU())
+            input_size = hidden_size
+        layers.append(nn.Linear(input_size, self.config['latent_dim']))
+        return nn.Sequential(*layers)
+
+    def create_fc_decoder(self):
+        layers = []
+        hidden_sizes = list(reversed(self.config['hidden_sizes']))
+        input_size = self.config['latent_dim']
+        for hidden_size in hidden_sizes:
+            layers.append(nn.Linear(input_size, hidden_size))
+            layers.append(nn.ReLU())
+            input_size = hidden_size
+        layers.append(nn.Linear(input_size, self.feature_size))
+        layers.append(nn.Sigmoid())
+        return nn.Sequential(*layers)
+    
+    def create_cnn_encoder(self):
+        input_channels = self.config['channels']
+        image_size = self.config['image_size']
+        encoder_hidden_channels = self.config['encoder_hidden_channels']
+        encoder_kernel_sizes = self.config['encoder_kernel_sizes']
+        encoder_strides = self.config['encoder_strides']
+        encoder_paddings = self.config['encoder_paddings']
+        latent_dim = self.config['latent_dim']
+
+        layers = []
+        in_channels = input_channels
+        for out_channels, kernel_size, stride, padding in zip(encoder_hidden_channels, encoder_kernel_sizes, encoder_strides, encoder_paddings):
+            layers += [
+                nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding),
+                nn.ReLU()
+            ]
+            in_channels = out_channels
+            image_size = (image_size - kernel_size + 2 * padding) // stride + 1
+
+        layers += [
+            nn.Flatten(),
+            nn.Linear(in_channels * image_size * image_size, latent_dim)
+        ]
+
+        self.reduced_size = image_size
+
+        return nn.Sequential(*layers)
+
+    def create_cnn_decoder(self):
+        latent_dim = self.config['latent_dim']
+        decoder_hidden_channels = self.config['decoder_hidden_channels']
+        decoder_kernel_sizes = self.config['decoder_kernel_sizes']
+        decoder_strides = self.config['decoder_strides']
+        decoder_paddings = self.config['decoder_paddings']
+        decoder_output_paddings = self.config['decoder_output_paddings']
+        output_channels = self.config['channels']
+
+        # initial_size = self.feature_size // 2**len(decoder_hidden_channels)  # Adjust based on the encoder architecture
+        layers = [nn.Linear(latent_dim, decoder_hidden_channels[0] * self.reduced_size * self.reduced_size), nn.ReLU()]
+        layers += [nn.Unflatten(1, (decoder_hidden_channels[0], self.reduced_size, self.reduced_size))]
+
+        for i in range(len(decoder_hidden_channels) - 1):
+            layers += [
+                nn.ConvTranspose2d(decoder_hidden_channels[i], decoder_hidden_channels[i+1], 
+                                kernel_size=decoder_kernel_sizes[i], 
+                                stride=decoder_strides[i], 
+                                padding=decoder_paddings[i], 
+                                output_padding=decoder_output_paddings[i]),
+                nn.ReLU()
+            ]
+
+        layers += [
+            nn.ConvTranspose2d(decoder_hidden_channels[-1], output_channels, 
+                            kernel_size=decoder_kernel_sizes[-1], 
+                            stride=decoder_strides[-1], 
+                            padding=decoder_paddings[-1], 
+                            output_padding=decoder_output_paddings[-1]),
+            nn.Sigmoid()
+        ]
+
+        return nn.Sequential(*layers)
+
     def sample_and_save_image(self, dataloader, log_dir):
         fixed_sample, _ = next(iter(dataloader))
+        fixed_sample = fixed_sample[0:1]
         fixed_sample_image = to_pil_image(fixed_sample[0])
         save_path = os.path.join(log_dir, 'fixed_sample.png')
         fixed_sample_image.save(save_path)
-        fixed_sample = fixed_sample[0].reshape(1, -1).to(self.device)
+        if self.architecture_type == 'fc':
+            fixed_sample = fixed_sample[0].reshape(1, -1).to(self.device)
+        else:
+            fixed_sample = fixed_sample.to(device)
         return fixed_sample
 
     def reconstruct_and_save_image(self, sample, log_dir, channels, image_size, epoch=None):
@@ -83,7 +188,10 @@ class AutoEncoder(nn.Module):
             loop = tqdm(enumerate(dataloader), total=len(dataloader), leave=True)
             self.train()
             for step, (batch, _) in loop:
-                batch = batch.to(self.device).reshape(-1, self.feature_size)
+                if self.architecture_type == 'fc':
+                    batch = batch.to(self.device).reshape(-1, self.feature_size)
+                else:
+                    batch = batch.to(self.device)
                 self.optimizer.zero_grad()
 
                 output = self.forward(batch)
@@ -116,7 +224,7 @@ class AutoEncoder(nn.Module):
 
 if __name__ == '__main__':
     ##### 0. Load MNIST dataset #####
-    dataset_name = 'CIFAR-10'
+    dataset_name = 'MNIST'
     if dataset_name == 'MNIST':
         dataset = MNIST(root='./data', transform=ToTensor(), download=True)
         channels = 1
@@ -134,5 +242,9 @@ if __name__ == '__main__':
         os.makedirs(log_dir)
 
     feature_size = channels * image_size * image_size
-    auto_encoder = AutoEncoder(feature_size=feature_size ,device=device).to(device)
+    auto_encoder = AutoEncoder(feature_size=feature_size, device=device,
+                               config={'type': 'cnn', 
+                                       'hidden_sizes': [512, 256, 128, 64, 32],
+                                       'channels': channels,
+                                       'image_size': image_size,}).to(device)
     auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
