@@ -4,6 +4,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from torchvision.transforms import ToTensor
@@ -11,7 +12,6 @@ from torchvision.transforms.functional import to_pil_image
 from torchvision.datasets import MNIST, CIFAR10
 from torch.utils.data import DataLoader
 
-# from itertools import chain
 from tqdm import tqdm
 
 import os
@@ -58,7 +58,6 @@ class AutoEncoder(nn.Module):
             raise ValueError("Unsupported architecture type")
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
-        # self.optimizer = optim.Adam(chain(self.encoder.parameters(), self.decoder.parameters()), lr=lr)
         self.epochs = epochs
 
     def forward(self, x):
@@ -67,9 +66,8 @@ class AutoEncoder(nn.Module):
 
         return output
     
-    @property
-    def loss_function(self):
-        return nn.MSELoss()
+    def calc_loss(self, input, output):
+        return F.mse_loss(input, output)
     
     def create_fc_encoder(self):
         layers = []
@@ -130,7 +128,6 @@ class AutoEncoder(nn.Module):
         decoder_output_paddings = self.config['decoder_output_paddings']
         output_channels = self.config['channels']
 
-        # initial_size = self.feature_size // 2**len(decoder_hidden_channels)  # Adjust based on the encoder architecture
         layers = [nn.Linear(latent_dim, decoder_hidden_channels[0] * self.reduced_size * self.reduced_size), nn.ReLU()]
         layers += [nn.Unflatten(1, (decoder_hidden_channels[0], self.reduced_size, self.reduced_size))]
 
@@ -164,8 +161,9 @@ class AutoEncoder(nn.Module):
         if self.architecture_type == 'fc':
             fixed_sample = fixed_sample[0].reshape(1, -1).to(self.device)
         else:
-            fixed_sample = fixed_sample.to(device)
+            fixed_sample = fixed_sample.to(self.device)
         return fixed_sample
+    
 
     def reconstruct_and_save_image(self, sample, log_dir, channels, image_size, epoch=None):
         epoch = 'init' if epoch is None else f'epoch_{epoch}'
@@ -175,6 +173,14 @@ class AutoEncoder(nn.Module):
             save_path = os.path.join(log_dir, f'reconstructed_image_{epoch}.png')
             reconstructed_image.save(save_path)
     
+    def step(self, batch):
+        self.optimizer.zero_grad()
+        outputs = self.forward(batch)
+        loss = self.calc_loss(batch, outputs)
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
+
     def learn(self, dataloader, log_dir, channels, image_size, patience=8, delta=0):
         fixed_sample = self.sample_and_save_image(dataloader=dataloader, log_dir=log_dir)
         self.eval()
@@ -192,20 +198,15 @@ class AutoEncoder(nn.Module):
                     batch = batch.to(self.device).reshape(-1, self.feature_size)
                 else:
                     batch = batch.to(self.device)
-                self.optimizer.zero_grad()
 
-                output = self.forward(batch)
-                loss = self.loss_function(output, batch)
-
-                loss.backward()
-                self.optimizer.step()
+                loss_item = self.step(batch=batch)
                 
                 if step % 50 == 0:
                     loop.set_description(f"Epoch [{epoch}/{self.epochs}]")
-                    loop.set_postfix(loss=loss.item())
+                    loop.set_postfix(loss=loss_item)
     
-            if loss.item() < best_loss - delta:
-                best_loss = loss.item()
+            if loss_item < best_loss - delta:
+                best_loss = loss_item
                 torch.save(self.state_dict(), os.path.join(log_dir, 'best_model.pth'))
                 model_saved_this_epoch = True
                 patience_counter = 0
@@ -223,7 +224,7 @@ class AutoEncoder(nn.Module):
                 print(f"New best model saved with loss {best_loss}")
 
 if __name__ == '__main__':
-    ##### 0. Load MNIST dataset #####
+    ##### 0. Load Dataset #####
     dataset_name = 'MNIST'
     if dataset_name == 'MNIST':
         dataset = MNIST(root='./data', transform=ToTensor(), download=True)
@@ -248,3 +249,5 @@ if __name__ == '__main__':
                                        'channels': channels,
                                        'image_size': image_size,}).to(device)
     auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
+
+    ##### 2. Generate image from random noise #####
