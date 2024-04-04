@@ -3,6 +3,7 @@
 """
 
 import os
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -14,11 +15,10 @@ from torchvision.transforms.functional import to_pil_image
 from torchvision.datasets import MNIST, CIFAR10
 from torch.utils.data import DataLoader
 
+from PIL import Image
 from tqdm import tqdm
-
 from utils.misc_utils import set_seed
 
-from PIL import Image
 
 class AutoEncoder(nn.Module):
     def __init__(self, 
@@ -32,8 +32,8 @@ class AutoEncoder(nn.Module):
         self.feature_size = feature_size
         self.config = {
             'type': 'fc',
-            'latent_dim': 16,
-            'hidden_sizes': [128, 64, 32],
+            'latent_dim': 256,
+            'hidden_sizes': [512, 512],
             'channels': 1,
             'image_size': 28,   # Default for MNIST
             'encoder_hidden_channels': [16, 32],    # Used for CNN #
@@ -72,8 +72,13 @@ class AutoEncoder(nn.Module):
 
         return output
     
+    def sample(self, z):
+        output = self.decoder(z)
+
+        return output
+    
     def calc_loss(self, input, output):
-        return F.mse_loss(input, output)
+        return F.binary_cross_entropy(output, input, reduction='sum')
     
     def create_fc_encoder(self):
         layers = []
@@ -157,27 +162,6 @@ class AutoEncoder(nn.Module):
         ]
 
         return nn.Sequential(*layers)
-
-    def sample_and_save_image(self, dataloader, log_dir):
-        fixed_sample, _ = next(iter(dataloader))
-        fixed_sample = fixed_sample[0:1]
-        fixed_sample_image = to_pil_image(fixed_sample[0])
-        save_path = os.path.join(log_dir, 'fixed_sample.png')
-        fixed_sample_image.save(save_path)
-        if self.architecture_type == 'fc':
-            fixed_sample = fixed_sample[0].reshape(1, -1).to(self.device)
-        else:
-            fixed_sample = fixed_sample.to(self.device)
-        return fixed_sample
-    
-
-    def reconstruct_and_save_image(self, sample, log_dir, channels, image_size, epoch=None):
-        epoch = 'init' if epoch is None else f'epoch_{epoch}'
-        with torch.no_grad():
-            reconstructed_sample = self.forward(sample).reshape(channels, image_size, image_size)
-            reconstructed_image = to_pil_image(reconstructed_sample.cpu())
-            save_path = os.path.join(log_dir, f'reconstructed_image_{epoch}.png')
-            reconstructed_image.save(save_path)
     
     def step(self, batch):
         self.optimizer.zero_grad()
@@ -233,6 +217,28 @@ class AutoEncoder(nn.Module):
             if model_saved_this_epoch:
                 print(f"New best model saved with loss {best_loss}")
 
+    def sample_and_save_image(self, dataloader, log_dir):
+        fixed_sample, _ = next(iter(dataloader))
+        fixed_sample = fixed_sample[0:1]
+        fixed_sample_image = to_pil_image(fixed_sample[0])
+        save_path = os.path.join(log_dir, 'fixed_sample.png')
+        fixed_sample_image.save(save_path)
+        if self.architecture_type == 'fc':
+            fixed_sample = fixed_sample[0].reshape(1, -1).to(self.device)
+        else:
+            fixed_sample = fixed_sample.to(self.device)
+        return fixed_sample
+    
+
+    def reconstruct_and_save_image(self, sample, log_dir, channels, image_size, epoch=None):
+        epoch = 'init' if epoch is None else f'epoch_{epoch}'
+        with torch.no_grad():
+            reconstructed_sample = self.forward(sample).reshape(channels, image_size, image_size)
+            reconstructed_image = to_pil_image(reconstructed_sample.cpu())
+            save_path = os.path.join(log_dir, f'reconstructed_image_{epoch}.png')
+            reconstructed_image.save(save_path)
+
+
 if __name__ == '__main__':
     set_seed()
     ##### 0. Load Dataset #####
@@ -245,21 +251,48 @@ if __name__ == '__main__':
         dataset = CIFAR10(root='./data', transform=ToTensor(), download=True)
         channels = 3
         image_size = 32
+    feature_size = channels * image_size * image_size
     dataloader = DataLoader(dataset=dataset, batch_size=128, shuffle=True)
-
-    ##### 1. Train the autoencoder #####
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'logs/{dataset_name}/')
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
-    feature_size = channels * image_size * image_size
-    auto_encoder = AutoEncoder(feature_size=feature_size, device=device,
-                               config={'type': 'fc', 
-                                       'latent_dim': 256,
-                                       'hidden_sizes': [512,],
-                                       'channels': channels,
-                                       'image_size': image_size,}).to(device)
-    auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
+    # ##### 1. Train the autoencoder #####
+    # auto_encoder = AutoEncoder(feature_size=feature_size, device=device,
+    #                            config={'type': 'fc', 
+    #                                    'latent_dim': 2,
+    #                                    'hidden_sizes': [512, 512,],
+    #                                    'channels': channels,
+    #                                    'image_size': image_size,}).to(device)
+    # auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
 
     ##### 2. Generate image from random noise #####
+    ## Load Model ##
+    auto_encoder = AutoEncoder(feature_size=feature_size, device=device,
+                               config={'type': 'fc', 
+                                       'latent_dim': 2,
+                                       'hidden_sizes': [512, 512],
+                                       'channels': channels,
+                                       'image_size': image_size,}).to(device=device)
+    auto_encoder.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
+
+    ## Sample ##
+    sample_range = [-1, 1]
+    steps = 10
+    points = torch.linspace(sample_range[0], sample_range[1], steps)
+    x, y = torch.meshgrid(points, points)
+    z = torch.stack([x.flatten(), y.flatten()], dim=1).to(device)
+
+    samples = [auto_encoder.sample(z[i].unsqueeze(0)).reshape(channels, image_size, image_size) for i in range(steps**2)]
+    images = [to_pil_image(sample.cpu()) for sample in samples]
+
+    ## Plot ##
+    fig, axs = plt.subplots(steps, steps, figsize=(10, 10))
+    for ax, img, xi, yi in zip(axs.flatten(), images, x.flatten(), y.flatten()):
+        ax.imshow(img)
+        ax.axis('off')
+        # ax.text(0.5, -0.1, f'({xi:.2f}, {yi:.2f})', va='center', ha='center', fontsize=6, transform=ax.transAxes)
+    plt.subplots_adjust(wspace=0, hspace=0)
+    # plt.suptitle('Auto Encoder: Random Samples')
+    plt.show()
