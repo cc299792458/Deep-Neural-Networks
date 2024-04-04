@@ -2,6 +2,8 @@
     Implement a most trivial auto-encoder to for MNIST dataset
 """
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +16,9 @@ from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 
-import os
+from utils.misc_utils import set_seed
+
+from PIL import Image
 
 class AutoEncoder(nn.Module):
     def __init__(self, 
@@ -22,7 +26,7 @@ class AutoEncoder(nn.Module):
                  config: dict = None,
                  device: str = 'cpu', 
                  lr: float = 1e-3, 
-                 epochs: int = 20) -> None:
+                 epochs: int = 30) -> None:
         super(AutoEncoder, self).__init__()
         self.device = device
         self.feature_size = feature_size
@@ -40,13 +44,15 @@ class AutoEncoder(nn.Module):
             'decoder_kernel_sizes': [3, 3],
             'decoder_strides': [2, 2],
             'decoder_paddings': [1, 1],
-            'decoder_output_paddings': [1, 1]
+            'decoder_output_paddings': [1, 1],
+            'activation': nn.ReLU()
         }
 
         if config is not None:
             self.config.update(config)
 
         self.architecture_type = self.config.get('type', 'fc')
+        self.activation = self.config.get('activation')
 
         if self.architecture_type == 'fc':
             self.encoder = self.create_fc_encoder()
@@ -74,7 +80,7 @@ class AutoEncoder(nn.Module):
         input_size = self.feature_size
         for hidden_size in self.config['hidden_sizes']:
             layers.append(nn.Linear(input_size, hidden_size))
-            layers.append(nn.ReLU())
+            layers.append(self.activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.config['latent_dim']))
         return nn.Sequential(*layers)
@@ -85,7 +91,7 @@ class AutoEncoder(nn.Module):
         input_size = self.config['latent_dim']
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
-            layers.append(nn.ReLU())
+            layers.append(self.activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.feature_size))
         layers.append(nn.Sigmoid())
@@ -105,7 +111,7 @@ class AutoEncoder(nn.Module):
         for out_channels, kernel_size, stride, padding in zip(encoder_hidden_channels, encoder_kernel_sizes, encoder_strides, encoder_paddings):
             layers += [
                 nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding),
-                nn.ReLU()
+                self.activation
             ]
             in_channels = out_channels
             image_size = (image_size - kernel_size + 2 * padding) // stride + 1
@@ -128,7 +134,7 @@ class AutoEncoder(nn.Module):
         decoder_output_paddings = self.config['decoder_output_paddings']
         output_channels = self.config['channels']
 
-        layers = [nn.Linear(latent_dim, decoder_hidden_channels[0] * self.reduced_size * self.reduced_size), nn.ReLU()]
+        layers = [nn.Linear(latent_dim, decoder_hidden_channels[0] * self.reduced_size * self.reduced_size), self.activation]
         layers += [nn.Unflatten(1, (decoder_hidden_channels[0], self.reduced_size, self.reduced_size))]
 
         for i in range(len(decoder_hidden_channels) - 1):
@@ -138,7 +144,7 @@ class AutoEncoder(nn.Module):
                                 stride=decoder_strides[i], 
                                 padding=decoder_paddings[i], 
                                 output_padding=decoder_output_paddings[i]),
-                nn.ReLU()
+                self.activation
             ]
 
         layers += [
@@ -189,6 +195,7 @@ class AutoEncoder(nn.Module):
         best_loss = float('inf')
         patience_counter = 0
         for epoch in range(self.epochs):
+            total_loss = 0
             model_saved_this_epoch = False
 
             loop = tqdm(enumerate(dataloader), total=len(dataloader), leave=True)
@@ -198,15 +205,18 @@ class AutoEncoder(nn.Module):
                     batch = batch.to(self.device).reshape(-1, self.feature_size)
                 else:
                     batch = batch.to(self.device)
-
-                loss_item = self.step(batch=batch)
+                
+                step_loss = self.step(batch=batch)
+                total_loss += step_loss
                 
                 if step % 50 == 0:
                     loop.set_description(f"Epoch [{epoch}/{self.epochs}]")
-                    loop.set_postfix(loss=loss_item)
-    
-            if loss_item < best_loss - delta:
-                best_loss = loss_item
+                    loop.set_postfix(loss=step_loss)
+
+            avg_loss = total_loss / len(loop)
+
+            if avg_loss < best_loss - delta:
+                best_loss = avg_loss
                 torch.save(self.state_dict(), os.path.join(log_dir, 'best_model.pth'))
                 model_saved_this_epoch = True
                 patience_counter = 0
@@ -224,6 +234,7 @@ class AutoEncoder(nn.Module):
                 print(f"New best model saved with loss {best_loss}")
 
 if __name__ == '__main__':
+    set_seed()
     ##### 0. Load Dataset #####
     dataset_name = 'MNIST'
     if dataset_name == 'MNIST':
@@ -234,7 +245,7 @@ if __name__ == '__main__':
         dataset = CIFAR10(root='./data', transform=ToTensor(), download=True)
         channels = 3
         image_size = 32
-    dataloader = DataLoader(dataset=dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset=dataset, batch_size=128, shuffle=True)
 
     ##### 1. Train the autoencoder #####
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -244,8 +255,9 @@ if __name__ == '__main__':
 
     feature_size = channels * image_size * image_size
     auto_encoder = AutoEncoder(feature_size=feature_size, device=device,
-                               config={'type': 'cnn', 
-                                       'hidden_sizes': [512, 256, 128, 64, 32],
+                               config={'type': 'fc', 
+                                       'latent_dim': 256,
+                                       'hidden_sizes': [512,],
                                        'channels': channels,
                                        'image_size': image_size,}).to(device)
     auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
