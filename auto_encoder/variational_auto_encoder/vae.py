@@ -12,7 +12,7 @@ from torchvision.datasets import MNIST, CIFAR10
 from torch.utils.data import DataLoader
 
 from auto_encoder import AutoEncoder
-from utils.misc_utils import set_seed
+from utils.misc_utils import set_seed, generate_random_images_and_save, generate_uniformly_distributed_images_and_save
 
 
 class VAE(AutoEncoder):
@@ -98,24 +98,18 @@ if __name__ == '__main__':
     # vae.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
 
     # ##### 2. Generate image from random noise #####
-    # vae.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
+    vae.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
 
-    # ## Sample ##
-    # sample_range = [-1, 1]
-    # steps = 10
-    # points = torch.linspace(sample_range[0], sample_range[1], steps)
-    # x, y = torch.meshgrid(points, points)
-    # z = torch.stack([x.flatten(), y.flatten()], dim=1).to(device)
-
-    # samples = [vae.sample(z[i].unsqueeze(0)).reshape(channels, image_size, image_size) for i in range(steps**2)]
-    # images = [to_pil_image(sample.cpu()) for sample in samples]
-
-    # ## Plot ##
-    # fig, axs = plt.subplots(steps, steps, figsize=(10, 10))
-    # for ax, img, xi, yi in zip(axs.flatten(), images, x.flatten(), y.flatten()):
-    #     ax.imshow(img)
-    #     ax.axis('off')
-    #     # ax.text(0.5, -0.1, f'({xi:.2f}, {yi:.2f})', va='center', ha='center', fontsize=6, transform=ax.transAxes)
-    # plt.subplots_adjust(wspace=0, hspace=0)
-    # # plt.suptitle('VAE: Random Samples')
-    # plt.show()
+    num_images = 400
+    z_ranges = ((-1, 1), (-1, 1))
+    generate_random_images_and_save(vae, 
+                                    num_images=num_images, 
+                                    log_dir=log_dir, 
+                                    image_size=image_size, 
+                                    latent_dim=latent_dim)
+    generate_uniformly_distributed_images_and_save(vae, 
+                                                   num_images=num_images, 
+                                                   z_ranges=z_ranges, 
+                                                   log_dir=log_dir, 
+                                                   image_size=image_size, 
+                                                   latent_dim=latent_dim)
