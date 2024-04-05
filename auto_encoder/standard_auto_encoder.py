@@ -26,7 +26,7 @@ class AutoEncoder(nn.Module):
                  config: dict = None,
                  device: str = 'cpu', 
                  lr: float = 1e-3, 
-                 epochs: int = 30) -> None:
+                 epochs: int = 100) -> None:
         super(AutoEncoder, self).__init__()
         self.device = device
         self.feature_size = feature_size
@@ -36,15 +36,11 @@ class AutoEncoder(nn.Module):
             'hidden_sizes': [512, 512],
             'channels': 1,
             'image_size': 28,   # Default for MNIST
-            'encoder_hidden_channels': [16, 32],    # Used for CNN #
-            'encoder_kernel_sizes': [3, 3],
-            'encoder_strides': [2, 2],
-            'encoder_paddings': [1, 1],
-            'decoder_hidden_channels': [32, 16],    # Used for CNN #
-            'decoder_kernel_sizes': [3, 3],
-            'decoder_strides': [2, 2],
-            'decoder_paddings': [1, 1],
-            'decoder_output_paddings': [1, 1],
+            'encoder_hidden_channels': [64, 128],    # Used for CNN #
+            'decoder_hidden_channels': [128, 64],    # Used for CNN #
+            'kernel_sizes': [4, 4],
+            'strides': [2, 2],
+            'paddings': [1, 1],
             'activation': nn.ReLU()
         }
 
@@ -103,19 +99,20 @@ class AutoEncoder(nn.Module):
         return nn.Sequential(*layers)
     
     def create_cnn_encoder(self):
+        latent_dim = self.config['latent_dim']
         input_channels = self.config['channels']
         image_size = self.config['image_size']
         encoder_hidden_channels = self.config['encoder_hidden_channels']
-        encoder_kernel_sizes = self.config['encoder_kernel_sizes']
-        encoder_strides = self.config['encoder_strides']
-        encoder_paddings = self.config['encoder_paddings']
-        latent_dim = self.config['latent_dim']
-
+        encoder_kernel_sizes = self.config['kernel_sizes']
+        encoder_strides = self.config['strides']
+        encoder_paddings = self.config['paddings']
+        
         layers = []
         in_channels = input_channels
         for out_channels, kernel_size, stride, padding in zip(encoder_hidden_channels, encoder_kernel_sizes, encoder_strides, encoder_paddings):
             layers += [
                 nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding),
+                nn.BatchNorm2d(out_channels),
                 self.activation
             ]
             in_channels = out_channels
@@ -133,10 +130,9 @@ class AutoEncoder(nn.Module):
     def create_cnn_decoder(self):
         latent_dim = self.config['latent_dim']
         decoder_hidden_channels = self.config['decoder_hidden_channels']
-        decoder_kernel_sizes = self.config['decoder_kernel_sizes']
-        decoder_strides = self.config['decoder_strides']
-        decoder_paddings = self.config['decoder_paddings']
-        decoder_output_paddings = self.config['decoder_output_paddings']
+        decoder_kernel_sizes = self.config['kernel_sizes']
+        decoder_strides = self.config['strides']
+        decoder_paddings = self.config['paddings']
         output_channels = self.config['channels']
 
         layers = [nn.Linear(latent_dim, decoder_hidden_channels[0] * self.reduced_size * self.reduced_size), self.activation]
@@ -147,8 +143,8 @@ class AutoEncoder(nn.Module):
                 nn.ConvTranspose2d(decoder_hidden_channels[i], decoder_hidden_channels[i+1], 
                                 kernel_size=decoder_kernel_sizes[i], 
                                 stride=decoder_strides[i], 
-                                padding=decoder_paddings[i], 
-                                output_padding=decoder_output_paddings[i]),
+                                padding=decoder_paddings[i]), 
+                nn.BatchNorm2d(decoder_hidden_channels[i+1]),
                 self.activation
             ]
 
@@ -156,8 +152,8 @@ class AutoEncoder(nn.Module):
             nn.ConvTranspose2d(decoder_hidden_channels[-1], output_channels, 
                             kernel_size=decoder_kernel_sizes[-1], 
                             stride=decoder_strides[-1], 
-                            padding=decoder_paddings[-1], 
-                            output_padding=decoder_output_paddings[-1]),
+                            padding=decoder_paddings[-1]), 
+            nn.BatchNorm2d(output_channels),
             nn.Sigmoid()
         ]
 
@@ -257,42 +253,40 @@ if __name__ == '__main__':
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    
+    ## Training parameters ## 
+    model_type = 'cnn'
+    latent_dim = 2
 
-    # ##### 1. Train the autoencoder #####
-    # auto_encoder = AutoEncoder(feature_size=feature_size, device=device,
-    #                            config={'type': 'fc', 
-    #                                    'latent_dim': 2,
-    #                                    'hidden_sizes': [512, 512,],
-    #                                    'channels': channels,
-    #                                    'image_size': image_size,}).to(device)
-    # auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
-
-    ##### 2. Generate image from random noise #####
-    ## Load Model ##
     auto_encoder = AutoEncoder(feature_size=feature_size, device=device,
-                               config={'type': 'fc', 
-                                       'latent_dim': 2,
-                                       'hidden_sizes': [512, 512],
+                               config={'type': model_type, 
+                                       'latent_dim': latent_dim,
                                        'channels': channels,
-                                       'image_size': image_size,}).to(device=device)
-    auto_encoder.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
+                                       'image_size': image_size,}).to(device)
 
-    ## Sample ##
-    sample_range = [-1, 1]
-    steps = 10
-    points = torch.linspace(sample_range[0], sample_range[1], steps)
-    x, y = torch.meshgrid(points, points)
-    z = torch.stack([x.flatten(), y.flatten()], dim=1).to(device)
+    ##### 1. Train the autoencoder #####
+    auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
 
-    samples = [auto_encoder.sample(z[i].unsqueeze(0)).reshape(channels, image_size, image_size) for i in range(steps**2)]
-    images = [to_pil_image(sample.cpu()) for sample in samples]
+    # ##### 2. Generate image from random noise #####
+    # ## Load Model ##
+    # auto_encoder.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
 
-    ## Plot ##
-    fig, axs = plt.subplots(steps, steps, figsize=(10, 10))
-    for ax, img, xi, yi in zip(axs.flatten(), images, x.flatten(), y.flatten()):
-        ax.imshow(img)
-        ax.axis('off')
-        # ax.text(0.5, -0.1, f'({xi:.2f}, {yi:.2f})', va='center', ha='center', fontsize=6, transform=ax.transAxes)
-    plt.subplots_adjust(wspace=0, hspace=0)
-    # plt.suptitle('Auto Encoder: Random Samples')
-    plt.show()
+    # ## Sample ##
+    # sample_range = [-1, 1]
+    # steps = 10
+    # points = torch.linspace(sample_range[0], sample_range[1], steps)
+    # x, y = torch.meshgrid(points, points)
+    # z = torch.stack([x.flatten(), y.flatten()], dim=1).to(device)
+
+    # samples = [auto_encoder.sample(z[i].unsqueeze(0)).reshape(channels, image_size, image_size) for i in range(steps**2)]
+    # images = [to_pil_image(sample.cpu()) for sample in samples]
+
+    # ## Plot ##
+    # fig, axs = plt.subplots(steps, steps, figsize=(10, 10))
+    # for ax, img, xi, yi in zip(axs.flatten(), images, x.flatten(), y.flatten()):
+    #     ax.imshow(img)
+    #     ax.axis('off')
+    #     # ax.text(0.5, -0.1, f'({xi:.2f}, {yi:.2f})', va='center', ha='center', fontsize=6, transform=ax.transAxes)
+    # plt.subplots_adjust(wspace=0, hspace=0)
+    # # plt.suptitle('Auto Encoder: Random Samples')
+    # plt.show()
