@@ -81,11 +81,11 @@ class AutoEncoder(nn.Module):
         input_size = self.feature_size
         for hidden_size in self.config['hidden_sizes']:
             layers.append(nn.Linear(input_size, hidden_size))
-            layers.append(nn.BatchNorm2d(hidden_size))
+            layers.append(nn.BatchNorm1d(hidden_size))
             layers.append(self.activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.config['latent_dim']))
-        layers.append(nn.BatchNorm2d(self.config['latent_dim']))
+        layers.append(nn.BatchNorm1d(self.config['latent_dim']))
         return nn.Sequential(*layers)
 
     def create_fc_decoder(self):
@@ -94,11 +94,11 @@ class AutoEncoder(nn.Module):
         input_size = self.config['latent_dim']
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
-            layers.append(nn.BatchNorm2d(hidden_size))
+            layers.append(nn.BatchNorm1d(hidden_size))
             layers.append(self.activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.feature_size))
-        layers.append(nn.BatchNorm2d(self.feature_size))
+        layers.append(nn.BatchNorm1d(self.feature_size))
         layers.append(nn.Sigmoid())
         return nn.Sequential(*layers)
     
@@ -268,23 +268,26 @@ if __name__ == '__main__':
                                        'channels': channels,
                                        'image_size': image_size,}).to(device)
 
+    train = True
     # ##### 1. Train the autoencoder #####
-    # auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
+    if train:
+        auto_encoder.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
 
-    # ##### 2. Generate image from random noise #####
-    ## Load Model ##
-    auto_encoder.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
+    ##### 2. Generate image from random noise #####
+    else:
+        ## Load Model ##
+        auto_encoder.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
 
-    num_images = 400
-    z_ranges = ((-1, 1), (-1, 1))
-    generate_random_images_and_save(auto_encoder, 
-                                    num_images=num_images, 
-                                    log_dir=log_dir, 
-                                    image_size=image_size, 
-                                    latent_dim=latent_dim)
-    generate_uniformly_distributed_images_and_save(auto_encoder, 
-                                                   num_images=num_images, 
-                                                   z_ranges=z_ranges, 
-                                                   log_dir=log_dir, 
-                                                   image_size=image_size, 
-                                                   latent_dim=latent_dim)
+        num_images = 400
+        z_ranges = ((-1, 1), (-1, 1))
+        generate_random_images_and_save(auto_encoder, 
+                                        num_images=num_images, 
+                                        log_dir=log_dir, 
+                                        image_size=image_size, 
+                                        latent_dim=latent_dim)
+        generate_uniformly_distributed_images_and_save(auto_encoder, 
+                                                    num_images=num_images, 
+                                                    z_ranges=z_ranges, 
+                                                    log_dir=log_dir, 
+                                                    image_size=image_size, 
+                                                    latent_dim=latent_dim)

@@ -94,22 +94,25 @@ if __name__ == '__main__':
                                        'channels': channels,
                                        'image_size': image_size,}).to(device)
 
+    train = True
     ##### 1. Train the autoencoder #####        
-    # vae.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
+    if train:
+        vae.learn(dataloader=dataloader, log_dir=log_dir, channels=channels, image_size=image_size)
 
     # ##### 2. Generate image from random noise #####
-    vae.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
+    else:
+        vae.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
 
-    num_images = 400
-    z_ranges = ((-1, 1), (-1, 1))
-    generate_random_images_and_save(vae, 
-                                    num_images=num_images, 
-                                    log_dir=log_dir, 
-                                    image_size=image_size, 
-                                    latent_dim=latent_dim)
-    generate_uniformly_distributed_images_and_save(vae, 
-                                                   num_images=num_images, 
-                                                   z_ranges=z_ranges, 
-                                                   log_dir=log_dir, 
-                                                   image_size=image_size, 
-                                                   latent_dim=latent_dim)
+        num_images = 400
+        z_ranges = ((-1, 1), (-1, 1))
+        generate_random_images_and_save(vae, 
+                                        num_images=num_images, 
+                                        log_dir=log_dir, 
+                                        image_size=image_size, 
+                                        latent_dim=latent_dim)
+        generate_uniformly_distributed_images_and_save(vae, 
+                                                    num_images=num_images, 
+                                                    z_ranges=z_ranges, 
+                                                    log_dir=log_dir, 
+                                                    image_size=image_size, 
+                                                    latent_dim=latent_dim)
