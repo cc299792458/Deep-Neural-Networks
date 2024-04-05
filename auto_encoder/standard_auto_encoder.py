@@ -81,9 +81,11 @@ class AutoEncoder(nn.Module):
         input_size = self.feature_size
         for hidden_size in self.config['hidden_sizes']:
             layers.append(nn.Linear(input_size, hidden_size))
+            layers.append(nn.BatchNorm2d(hidden_size))
             layers.append(self.activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.config['latent_dim']))
+        layers.append(nn.BatchNorm2d(self.config['latent_dim']))
         return nn.Sequential(*layers)
 
     def create_fc_decoder(self):
@@ -92,9 +94,11 @@ class AutoEncoder(nn.Module):
         input_size = self.config['latent_dim']
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
+            layers.append(nn.BatchNorm2d(hidden_size))
             layers.append(self.activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.feature_size))
+        layers.append(nn.BatchNorm2d(self.feature_size))
         layers.append(nn.Sigmoid())
         return nn.Sequential(*layers)
     
