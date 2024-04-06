@@ -1,9 +1,8 @@
 """
-    Implement a most trivial auto-encoder to for MNIST dataset
+    Implement a most trivial auto-encoder for MNIST dataset
 """
 
 import os
-import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -14,7 +13,6 @@ from torchvision.transforms import ToTensor
 from torchvision.transforms.functional import to_pil_image
 from torchvision.datasets import MNIST, CIFAR10
 from torch.utils.data import DataLoader
-
 
 from tqdm import tqdm
 from utils.misc_utils import set_seed, generate_random_images_and_save, generate_uniformly_distributed_images_and_save
@@ -47,7 +45,7 @@ class AutoEncoder(nn.Module):
         if config is not None:
             self.config.update(config)
 
-        self.architecture_type = self.config.get('type', 'fc')
+        self.architecture_type = self.config.get('type')
         self.activation = self.config.get('activation')
 
         if self.architecture_type == 'fc':

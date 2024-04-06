@@ -1,27 +1,22 @@
+import os
+
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import matplotlib.pyplot as plt
+
+from torchvision.transforms import ToTensor
+from torchvision.transforms.functional import to_pil_image
+from torchvision.datasets import MNIST, CIFAR10
 from torch.utils.data import DataLoader
 
+from tqdm import tqdm
+from fully_convolutional_network.unet import UNet
 from utils.data_utils.dataset_utils import StanfordCars, show_images, tensor_to_PIL
-from utils.network_utils.network_utils import UNet
-
-# torch.autograd.set_detect_anomaly(True)
-
-def show_forward_process(image, diffusion_model, timesteps=200, num_images=10):
-    stepsize = int(timesteps / num_images)
-
-    plt.figure(figsize=(12, 12))
-    for i in range(0, timesteps, stepsize):
-        time = torch.Tensor([i]).type(torch.int64)
-        image_nosiy, noise = diffusion_model.forward_diffusion(image.unsqueeze(0), time)
-        image_pil = tensor_to_PIL(image_nosiy.squeeze())
-        plt.subplot(1, num_images + 1, i // stepsize + 1)
-        plt.imshow(image_pil)
-        plt.axis('off')
-    plt.tight_layout()
-    plt.show()
+from utils.misc_utils import (set_seed, 
+                              generate_random_images_and_save, 
+                              generate_uniformly_distributed_images_and_save,
+                              show_forward_process)
 
 class DiffusionModel:
     def __init__(self, unet: UNet, 
@@ -87,18 +82,38 @@ class DiffusionModel:
 
 
 if __name__ == '__main__':
-    ##### 1. Load dataset #####
-    dataset = StanfordCars()
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True, drop_last=True)
+    ##### 0. Load Dataset #####
+    dataset_name = 'MNIST'
+    # transform = 
+    if dataset_name == 'MNIST':
+        dataset = MNIST(root='./data', transform=ToTensor(), download=True)
+        channels = 1
+        image_size = 28
+    elif dataset_name == 'CIFAR-10':
+        dataset = CIFAR10(root='./data', transform=ToTensor(), download=True)
+        channels = 3
+        image_size = 32
+    elif dataset_name == 'StanfordCars':
+        # TODO: something needs to be adjust here.
+        dataset = StanfordCars()
     # show_images(dataset=dataset, num_samples=8)
 
-    ##### 2. Train the diffusion model(Forward process) #####
+    feature_size = channels * image_size * image_size
+    dataloader = DataLoader(dataset=dataset, batch_size=128, shuffle=True)
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'logs/{dataset_name}/')
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    
+    ## Training parameters ## 
+    model_type = 'unet'
     timesteps = 300
 
     unet = UNet()
     diffusion_model = DiffusionModel(unet=unet, device=device, timesteps=timesteps)
+
+    ##### 1. Train the diffusion model(Forward process) #####'
     # show_forward_process(image=next(iter(dataloader))[0], diffusion_model=diffusion_model, timesteps=timesteps)
     diffusion_model.train(dataloader=dataloader)
 
-    ##### 3. Evaluate the diffusion model(Reverse process) #####
+    ##### 2. Evaluate the diffusion model(Reverse process) #####

@@ -2,6 +2,7 @@ import os
 import math
 import random
 import numpy as np
+import matplotlib.pyplot as plt
 from PIL import Image
 
 import torch
@@ -77,3 +78,16 @@ def generate_uniformly_distributed_images_and_save(model, num_images, z_ranges, 
     collage_file_path = os.path.join(log_dir, "uniformly_distributed_sample.png")
     collage.save(collage_file_path)
     print(f"Uniformly distributed sample saved to {collage_file_path}")
+
+def show_forward_process(image, diffusion_model, timesteps=200, num_images=10):
+    stepsize = int(timesteps / num_images)
+    plt.figure(figsize=(12, 12))
+    for i in range(0, timesteps, stepsize):
+        time = torch.Tensor([i]).type(torch.int64)
+        image_nosiy, noise = diffusion_model.forward_diffusion(image.unsqueeze(0), time)
+        image_pil = to_pil_image(image_nosiy.squeeze())
+        plt.subplot(1, num_images + 1, i // stepsize + 1)
+        plt.imshow(image_pil)
+        plt.axis('off')
+    plt.tight_layout()
+    plt.show()
