@@ -265,7 +265,7 @@ if __name__ == '__main__':
                                        'latent_dim': latent_dim,
                                        'channels': channels,
                                        'image_size': image_size,}).to(device)
-
+    
     train = True
     # ##### 1. Train the autoencoder #####
     if train:
