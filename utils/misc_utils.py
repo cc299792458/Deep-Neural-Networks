@@ -17,10 +17,10 @@ def set_seed(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def generate_random_images_and_save(model, num_images, log_dir, image_size=28, latent_dim=2):
+def generate_random_images_and_save(model, num_images, log_dir, image_size=28, latent_dim=2, z=None):
     model.eval()
-    z = torch.randn(num_images, latent_dim).to(model.device)
-    
+    z = torch.randn(num_images, latent_dim).to(model.device) if z == None else z
+
     with torch.no_grad():
         generated_images = model.sample(z).cpu()
     

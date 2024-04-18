@@ -30,10 +30,10 @@ class AutoEncoder(nn.Module):
         self.feature_size = feature_size
         self.config = {
             'type': 'fc',
-            'latent_dim': 256,
-            'hidden_sizes': [512, 512],
             'channels': 1,
             'image_size': 28,   # Default for MNIST
+            'latent_dim': 256,
+            'hidden_sizes': [512, 512],
             'encoder_hidden_channels': [64, 128],    # Used for CNN #
             'decoder_hidden_channels': [128, 64],    # Used for CNN #
             'kernel_sizes': [4, 4],
