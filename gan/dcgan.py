@@ -435,7 +435,7 @@ if __name__ == '__main__':
             # Since we just updated D, perform another forward pass of all-fake batch through D
             output = dcgan.discriminator(fake).view(-1)
             # Calculate G's loss based on this output
-            errG = criterion(output, label)
+            errG = dcgan.criterion(output, label)
             # Calculate gradients for G
             errG.backward()
             D_G_z2 = output.mean().item()
