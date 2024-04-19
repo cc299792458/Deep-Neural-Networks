@@ -1,106 +1,25 @@
-# -*- coding: utf-8 -*-
 """
-DCGAN Tutorial
-==============
-
-**Author**: `Nathan Inkawhich <https://github.com/inkawhich>`__
-
+    DCGAN (Deep Convolutional Generative Adversarial Networks)
 """
 
-#%matplotlib inline
-import argparse
 import os
-import random
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.optim as optim
-import torch.nn.functional as F
 import torch.utils.data
-import torchvision.datasets as dset
-import torchvision.transforms as transforms
-import torchvision.utils as vutils
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from IPython.display import HTML
-from utils.misc_utils import set_seed
 
-
-from torchvision.transforms import Compose, ToTensor, Normalize
-from torchvision.transforms.functional import to_pil_image
-from torchvision.datasets import MNIST, CIFAR10
 from torch.utils.data import DataLoader
+from torchvision.utils import make_grid
+from torchvision.datasets import MNIST, CIFAR10
+from torchvision.transforms import Compose, ToTensor, Normalize
 
-from tqdm import tqdm
-from utils.misc_utils import set_seed, generate_random_images_and_save
-
-set_seed()
-
-class DCGAN(nn.Module):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-
-# Root directory for dataset
-dataroot = "data/MNIST"
-
-# Number of workers for dataloader
-workers = 2
-
-# Batch size during training
-batch_size = 128
-
-# Spatial size of training images. All images will be resized to this
-#   size using a transformer.
-image_size = 64
-
-# Number of channels in the training images. For color images this is 3
-nc = 3
-
-# Size of z latent vector (i.e. size of generator input)
-nz = 128
-
-# Size of feature maps in generator
-ngf = 64
-
-# Size of feature maps in discriminator
-ndf = 64
-
-# Number of training epochs
-num_epochs = 40
-
-# Learning rate for optimizers
-lr = 0.0002
-
-# Beta1 hyperparameter for Adam optimizers
-beta1 = 0.5
-
-# dataset = dset.ImageFolder(root=dataroot,
-#                            transform=transforms.Compose([
-#                                transforms.Resize(image_size),
-#                                transforms.CenterCrop(image_size),
-#                                transforms.ToTensor(),
-#                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-#                            ]))
-# # Create the dataloader
-# dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-#                                          shuffle=True, num_workers=workers)
-
-transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=(0.5, ), std=(0.5, ))])
-dataset = dset.MNIST(root='./data', transform=transform, download=True)
-dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
-
-# Decide which device we want to run on
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-# Plot some training images
-real_batch = next(iter(dataloader))
-plt.figure(figsize=(8,8))
-plt.axis("off")
-plt.title("Training Images")
-plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
-plt.show()
+from IPython.display import HTML
+from utils.misc_utils import set_seed, plot_data_from_dataloader
 
 class DCGAN(nn.Module):
     def __init__(self,
@@ -210,130 +129,156 @@ class DCGAN(nn.Module):
             nn.init.normal_(m.weight.data, 1.0, 0.02)
             nn.init.constant_(m.bias.data, 0)
 
+    def learn(self, dataloader, log_dir=None):
+        # Create batch of latent vectors that we will use to visualize
+        # the progression of the generator
+        fixed_noise = torch.randn(64, latent_dim, device=device)
 
-# # custom weights initialization called on ``netG`` and ``netD``
-# def weights_init(m):
-#     classname = m.__class__.__name__
-#     if classname.find('Conv') != -1:
-#         nn.init.normal_(m.weight.data, 0.0, 0.02)
-#     elif classname.find('BatchNorm') != -1:
-#         nn.init.normal_(m.weight.data, 1.0, 0.02)
-#         nn.init.constant_(m.bias.data, 0)
+        # Establish convention for real and fake labels during training
+        real_label = 1.
+        fake_label = 0.
 
-# class Generator(nn.Module):
-#     def __init__(self, ngpu):
-#         super(Generator, self).__init__()
-#         self.ngpu = ngpu
-        
-#         # Linear transformation
-#         self.linear = nn.Linear(in_features=128, out_features=6272, bias=True)
-        
-#         # Batch normalization for the linear output
-#         self.batch_norm1 = nn.BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
-        
-#         # First Deconvolution Block
-#         self.deconv1 = nn.ConvTranspose2d(128, 128, 4, 2, 1, bias=False)
-#         self.batch_norm2 = nn.BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
-#         self.leaky_relu1 = nn.LeakyReLU(0.2, inplace=True)
-        
-#         # Second Deconvolution Block
-#         self.deconv2 = nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False)
-#         self.batch_norm3 = nn.BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
-#         self.leaky_relu2 = nn.LeakyReLU(0.2, inplace=True)
-        
-#         # Third Deconvolution Block
-#         self.deconv3 = nn.ConvTranspose2d(64, 1, 3, 1, 1, bias=False)
-#         self.batch_norm4 = nn.BatchNorm2d(1, eps=1e-05, momentum=0.8, affine=True, track_running_stats=True)
-#         self.tanh = nn.Tanh()
-        
-#     def forward(self, input):
-#         x = self.linear(input)
-#         x = x.view(-1, 128, 7, 7)  # Reshape linear output to match the expected input of batch_norm1
-#         x = self.batch_norm1(x)
-#         x = self.deconv1(x)
-#         x = self.batch_norm2(x)
-#         x = self.leaky_relu1(x)
-#         x = self.deconv2(x)
-#         x = self.batch_norm3(x)
-#         x = self.leaky_relu2(x)
-#         x = self.deconv3(x)
-#         x = self.batch_norm4(x)
-#         output = self.tanh(x)
-#         return output
+        # Training Loop
 
-# # Create the generator
-# netG = Generator(ngpu).to(device)
-# netG.apply(weights_init)
+        # Lists to keep track of progress
+        img_list = []
+        G_losses = []
+        D_losses = []
+        iters = 0
 
-# # Print the model
-# print(netG)
+        print("Starting Training Loop...")
+        # For each epoch
+        for epoch in range(self.epochs):
+            # For each batch in the dataloader
+            for i, data in enumerate(dataloader, 0):
+                
+                ############################
+                # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+                ###########################
+                ## Train with all-real batch
+                dcgan.discriminator.zero_grad()
+                # Format batch
+                real_cpu = data[0].to(device)
+                b_size = real_cpu.size(0)
+                label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+                # Forward pass real batch through D
+                output = dcgan.discriminator(real_cpu).view(-1)
+                # Calculate loss on all-real batch
+                errD_real = dcgan.criterion(output, label)
+                # Calculate gradients for D in backward pass
+                errD_real.backward()
+                D_x = output.mean().item()
 
-# class Discriminator(nn.Module):
-#     def __init__(self, ngpu):
-#         super(Discriminator, self).__init__()
-#         self.ngpu = ngpu
-        
-#         # First Convolution Block
-#         self.conv1 = nn.Conv2d(1, 16, 3, 2, 1, bias=False)  # Assumes input channel of 1
-#         self.leaky_relu1 = nn.LeakyReLU(0.2, inplace=True)
-#         self.dropout1 = nn.Dropout2d(0.25)
-#         self.batch_norm1 = nn.BatchNorm2d(16, eps=1e-05, momentum=0.8, affine=True, track_running_stats=True)
-        
-#         # Second Convolution Block
-#         self.conv2 = nn.Conv2d(16, 32, 3, 2, 1, bias=False)
-#         self.leaky_relu2 = nn.LeakyReLU(0.2, inplace=True)
-#         self.dropout2 = nn.Dropout2d(0.25)
-#         self.batch_norm2 = nn.BatchNorm2d(32, eps=1e-05, momentum=0.8, affine=True, track_running_stats=True)
-        
-#         # Third Convolution Block
-#         self.conv3 = nn.Conv2d(32, 64, 3, 2, 1, bias=False)
-#         self.leaky_relu3 = nn.LeakyReLU(0.2, inplace=True)
-#         self.dropout3 = nn.Dropout2d(0.25)
-#         self.batch_norm3 = nn.BatchNorm2d(64, eps=1e-05, momentum=0.8, affine=True, track_running_stats=True)
-        
-#         # Fourth Convolution Block
-#         self.conv4 = nn.Conv2d(64, 128, 3, 2, 1, bias=False)
-#         self.leaky_relu4 = nn.LeakyReLU(0.2, inplace=True)
-#         self.dropout4 = nn.Dropout2d(0.25)
-#         self.batch_norm4 = nn.BatchNorm2d(128, eps=1e-05, momentum=0.8, affine=True, track_running_stats=True)
-        
-#         # Flatten and Output Layer
-#         self.flatten = nn.Flatten()
-#         self.final_layer = nn.Linear(128 * 2 * 2, 1)  # Assumes the final spatial dimension is 4x4
-#         self.sigmoid = nn.Sigmoid()
-        
-#     def forward(self, input):
-#         x = self.conv1(input)
-#         x = self.leaky_relu1(x)
-#         x = self.dropout1(x)
-#         x = self.batch_norm1(x)
-        
-#         x = self.conv2(x)
-#         x = self.leaky_relu2(x)
-#         x = self.dropout2(x)
-#         x = self.batch_norm2(x)
-        
-#         x = self.conv3(x)
-#         x = self.leaky_relu3(x)
-#         x = self.dropout3(x)
-#         x = self.batch_norm3(x)
-        
-#         x = self.conv4(x)
-#         x = self.leaky_relu4(x)
-#         x = self.dropout4(x)
-#         x = self.batch_norm4(x)
-        
-#         x = self.flatten(x)
-#         x = self.final_layer(x)
-#         output = self.sigmoid(x)
-#         return output
+                ## Train with all-fake batch
+                # Generate batch of latent vectors
+                noise = torch.randn(b_size, latent_dim, device=device)
+                # Generate fake image batch with G
+                fake = dcgan.generator(noise)
+                label.fill_(fake_label)
+                # Classify all fake batch with D
+                output = dcgan.discriminator(fake.detach()).view(-1)
+                # Calculate D's loss on the all-fake batch
+                errD_fake = dcgan.criterion(output, label)
+                # Calculate the gradients for this batch, accumulated (summed) with previous gradients
+                errD_fake.backward()
+                D_G_z1 = output.mean().item()
+                # Compute error of D as sum over the fake and the real batches
+                errD = errD_real + errD_fake
+                # Update D
+                dcgan.d_optimizer.step()
 
-# # Create the Discriminator
-# netD = Discriminator(ngpu).to(device)    
-# netD.apply(weights_init)
+                ############################
+                # (2) Update G network: maximize log(D(G(z)))
+                ###########################
+                dcgan.generator.zero_grad()
+                label.fill_(real_label)  # fake labels are real for generator cost
+                # Since we just updated D, perform another forward pass of all-fake batch through D
+                output = dcgan.discriminator(fake).view(-1)
+                # Calculate G's loss based on this output
+                errG = dcgan.criterion(output, label)
+                # Calculate gradients for G
+                errG.backward()
+                D_G_z2 = output.mean().item()
+                # Update G
+                dcgan.g_optimizer.step()
+                
+                # Output training stats
+                if i % 50 == 0:
+                    print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
+                        % (epoch, self.epochs, i, len(dataloader),
+                            errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+                
+                # Save Losses for plotting later
+                G_losses.append(errG.item())
+                D_losses.append(errD.item())
+                
+                # Check how the generator is doing by saving G's output on fixed_noise
+                if (iters % 500 == 0) or ((epoch == self.epochs-1) and (i == len(dataloader)-1)):
+                    with torch.no_grad():
+                        fake = dcgan.generator(fixed_noise).detach().cpu()
+                    img_list.append(make_grid(fake, padding=2, normalize=True))
+                    
+                iters += 1
 
-# # Print the model
-# print(netD)
+
+        ######################################################################
+        # Results
+        # -------
+        # 
+        # Finally, lets check out how we did. Here, we will look at three
+        # different results. First, we will see how D and G’s losses changed
+        # during training. Second, we will visualize G’s output on the fixed_noise
+        # batch for every epoch. And third, we will look at a batch of real data
+        # next to a batch of fake data from G.
+        # 
+        # **Loss versus training iteration**
+        # 
+        # Below is a plot of D & G’s losses versus training iterations.
+        # 
+
+        plt.figure(figsize=(10,5))
+        plt.title("Generator and Discriminator Loss During Training")
+        plt.plot(G_losses,label="G")
+        plt.plot(D_losses,label="D")
+        plt.xlabel("iterations")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.show()
+
+
+        ######################################################################
+        # **Visualization of G’s progression**
+        # 
+        # Remember how we saved the generator’s output on the fixed_noise batch
+        # after every epoch of training. Now, we can visualize the training
+        # progression of G with an animation. Press the play button to start the
+        # animation.
+        # 
+
+        #%%capture
+        fig = plt.figure(figsize=(8,8))
+        plt.axis("off")
+        ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
+        ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+
+        HTML(ani.to_jshtml())
+
+        # Grab a batch of real images from the dataloader
+        real_batch = next(iter(dataloader))
+
+        # Plot the real images
+        plt.figure(figsize=(15,15))
+        plt.subplot(1,2,1)
+        plt.axis("off")
+        plt.title("Real Images")
+        plt.imshow(np.transpose(make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
+
+        # Plot the fake images from the last epoch
+        plt.subplot(1,2,2)
+        plt.axis("off")
+        plt.title("Fake Images")
+        plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+        plt.show()
 
 if __name__ == '__main__':
     set_seed()
@@ -357,6 +302,7 @@ if __name__ == '__main__':
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # plot_data_from_dataloader(dataloader=dataloader, device=device)
 
     ## Training parameters ## 
     latent_dim = 128
@@ -368,154 +314,7 @@ if __name__ == '__main__':
 
     train = True
     # ##### 1. Train the dcgan #####
+    if train:
+        dcgan.learn(dataloader=dataloader)
 
-
-    # Create batch of latent vectors that we will use to visualize
-    #  the progression of the generator
-    fixed_noise = torch.randn(64, nz, device=device)
-
-    # Establish convention for real and fake labels during training
-    real_label = 1.
-    fake_label = 0.
-
-    # Training Loop
-
-    # Lists to keep track of progress
-    img_list = []
-    G_losses = []
-    D_losses = []
-    iters = 0
-
-    print("Starting Training Loop...")
-    # For each epoch
-    for epoch in range(num_epochs):
-        # For each batch in the dataloader
-        for i, data in enumerate(dataloader, 0):
-            
-            ############################
-            # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-            ###########################
-            ## Train with all-real batch
-            dcgan.discriminator.zero_grad()
-            # Format batch
-            real_cpu = data[0].to(device)
-            b_size = real_cpu.size(0)
-            label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-            # Forward pass real batch through D
-            output = dcgan.discriminator(real_cpu).view(-1)
-            # Calculate loss on all-real batch
-            errD_real = dcgan.criterion(output, label)
-            # Calculate gradients for D in backward pass
-            errD_real.backward()
-            D_x = output.mean().item()
-
-            ## Train with all-fake batch
-            # Generate batch of latent vectors
-            noise = torch.randn(b_size, nz, device=device)
-            # Generate fake image batch with G
-            fake = dcgan.generator(noise)
-            label.fill_(fake_label)
-            # Classify all fake batch with D
-            output = dcgan.discriminator(fake.detach()).view(-1)
-            # Calculate D's loss on the all-fake batch
-            errD_fake = dcgan.criterion(output, label)
-            # Calculate the gradients for this batch, accumulated (summed) with previous gradients
-            errD_fake.backward()
-            D_G_z1 = output.mean().item()
-            # Compute error of D as sum over the fake and the real batches
-            errD = errD_real + errD_fake
-            # Update D
-            dcgan.d_optimizer.step()
-
-            ############################
-            # (2) Update G network: maximize log(D(G(z)))
-            ###########################
-            dcgan.generator.zero_grad()
-            label.fill_(real_label)  # fake labels are real for generator cost
-            # Since we just updated D, perform another forward pass of all-fake batch through D
-            output = dcgan.discriminator(fake).view(-1)
-            # Calculate G's loss based on this output
-            errG = dcgan.criterion(output, label)
-            # Calculate gradients for G
-            errG.backward()
-            D_G_z2 = output.mean().item()
-            # Update G
-            dcgan.g_optimizer.step()
-            
-            # Output training stats
-            if i % 50 == 0:
-                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
-                    % (epoch, num_epochs, i, len(dataloader),
-                        errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
-            
-            # Save Losses for plotting later
-            G_losses.append(errG.item())
-            D_losses.append(errD.item())
-            
-            # Check how the generator is doing by saving G's output on fixed_noise
-            if (iters % 500 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
-                with torch.no_grad():
-                    fake = dcgan.generator(fixed_noise).detach().cpu()
-                img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
-                
-            iters += 1
-
-
-    ######################################################################
-    # Results
-    # -------
-    # 
-    # Finally, lets check out how we did. Here, we will look at three
-    # different results. First, we will see how D and G’s losses changed
-    # during training. Second, we will visualize G’s output on the fixed_noise
-    # batch for every epoch. And third, we will look at a batch of real data
-    # next to a batch of fake data from G.
-    # 
-    # **Loss versus training iteration**
-    # 
-    # Below is a plot of D & G’s losses versus training iterations.
-    # 
-
-    plt.figure(figsize=(10,5))
-    plt.title("Generator and Discriminator Loss During Training")
-    plt.plot(G_losses,label="G")
-    plt.plot(D_losses,label="D")
-    plt.xlabel("iterations")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.show()
-
-
-    ######################################################################
-    # **Visualization of G’s progression**
-    # 
-    # Remember how we saved the generator’s output on the fixed_noise batch
-    # after every epoch of training. Now, we can visualize the training
-    # progression of G with an animation. Press the play button to start the
-    # animation.
-    # 
-
-    #%%capture
-    fig = plt.figure(figsize=(8,8))
-    plt.axis("off")
-    ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
-    ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
-
-    HTML(ani.to_jshtml())
-
-    # Grab a batch of real images from the dataloader
-    real_batch = next(iter(dataloader))
-
-    # Plot the real images
-    plt.figure(figsize=(15,15))
-    plt.subplot(1,2,1)
-    plt.axis("off")
-    plt.title("Real Images")
-    plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
-
-    # Plot the fake images from the last epoch
-    plt.subplot(1,2,2)
-    plt.axis("off")
-    plt.title("Fake Images")
-    plt.imshow(np.transpose(img_list[-1],(1,2,0)))
-    plt.show()
+    

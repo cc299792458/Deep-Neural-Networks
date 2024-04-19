@@ -5,10 +5,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+from torch.utils.data import DataLoader
 from torchvision.transforms import Compose, ToTensor, Normalize
 from torchvision.transforms.functional import to_pil_image
 from torchvision.datasets import MNIST, CIFAR10
-from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 from utils.misc_utils import set_seed, generate_random_images_and_save
