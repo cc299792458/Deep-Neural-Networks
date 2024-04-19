@@ -275,7 +275,7 @@ if __name__ == '__main__':
                       'image_size': image_size,}).to(device)
     
     train = True
-    # ##### 1. Train the autoencoder #####
+    # ##### 1. Train the gan #####
     if train:
         gan.learn(dataloader=dataloader, log_dir=log_dir)
     
