@@ -193,12 +193,14 @@ if __name__ == '__main__':
 
     ## Training parameters ## 
     latent_dim = 128
-    epochs = 100
+    lr = 2e-4
+    epochs = 200
 
     wgan = WGAN(feature_size=feature_size, device=device,
             config={'latent_dim': latent_dim, 
                     'channels': channels, 
-                    'image_size': image_size,}, epochs=epochs).to(device)
+                    'image_size': image_size,}, 
+                    lr=lr, epochs=epochs).to(device)
 
     train = True
     ##### 1. Train the model #####
