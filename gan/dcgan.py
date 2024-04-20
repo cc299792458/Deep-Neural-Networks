@@ -129,133 +129,121 @@ class DCGAN(nn.Module):
             nn.init.normal_(m.weight.data, 1.0, 0.02)
             nn.init.constant_(m.bias.data, 0)
 
-    def learn(self, dataloader, log_dir=None):
+    def learn(self, dataloader: DataLoader, log_dir=None):
         # Create batch of latent vectors that we will use to visualize
         # the progression of the generator
-        fixed_noise = torch.randn(64, latent_dim, device=device)
+        fixed_noise = torch.randn(64, self.latent_dim, device=self.device)
 
         # Establish convention for real and fake labels during training
         real_label = 1.
         fake_label = 0.
 
-        # Training Loop
-
         # Lists to keep track of progress
         img_list = []
-        G_losses = []
-        D_losses = []
+        g_losses = []
+        d_losses = []
         iters = 0
 
         print("Starting Training Loop...")
-        # For each epoch
         for epoch in range(self.epochs):
-            # For each batch in the dataloader
-            for i, data in enumerate(dataloader, 0):
-                
-                ############################
-                # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-                ###########################
-                ## Train with all-real batch
-                dcgan.discriminator.zero_grad()
-                # Format batch
-                real_cpu = data[0].to(device)
-                b_size = real_cpu.size(0)
-                label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-                # Forward pass real batch through D
-                output = dcgan.discriminator(real_cpu).view(-1)
-                # Calculate loss on all-real batch
-                errD_real = dcgan.criterion(output, label)
-                # Calculate gradients for D in backward pass
-                errD_real.backward()
-                D_x = output.mean().item()
+            model_saved_this_epoch = False
+            for step, (real_image, _) in enumerate(dataloader):
+                real_image = real_image.to(self.device)
+                batch_size = real_image.shape[0]
+                # Update Discriminator
+                d_loss, gen_image, real_score, fake_score_before_update = self.discriminator_step(
+                    real_image=real_image, 
+                    real_label=real_label, 
+                    fake_label=fake_label,
+                    batch_size=batch_size
+                )
 
-                ## Train with all-fake batch
-                # Generate batch of latent vectors
-                noise = torch.randn(b_size, latent_dim, device=device)
-                # Generate fake image batch with G
-                fake = dcgan.generator(noise)
-                label.fill_(fake_label)
-                # Classify all fake batch with D
-                output = dcgan.discriminator(fake.detach()).view(-1)
-                # Calculate D's loss on the all-fake batch
-                errD_fake = dcgan.criterion(output, label)
-                # Calculate the gradients for this batch, accumulated (summed) with previous gradients
-                errD_fake.backward()
-                D_G_z1 = output.mean().item()
-                # Compute error of D as sum over the fake and the real batches
-                errD = errD_real + errD_fake
-                # Update D
-                dcgan.d_optimizer.step()
-
-                ############################
-                # (2) Update G network: maximize log(D(G(z)))
-                ###########################
-                dcgan.generator.zero_grad()
-                label.fill_(real_label)  # fake labels are real for generator cost
-                # Since we just updated D, perform another forward pass of all-fake batch through D
-                output = dcgan.discriminator(fake).view(-1)
-                # Calculate G's loss based on this output
-                errG = dcgan.criterion(output, label)
-                # Calculate gradients for G
-                errG.backward()
-                D_G_z2 = output.mean().item()
-                # Update G
-                dcgan.g_optimizer.step()
+                # Update Generator
+                g_loss, fake_score_after_update = self.generator_step(
+                    gen_image=gen_image, 
+                    real_label=real_label,
+                    batch_size=batch_size
+                )
                 
                 # Output training stats
-                if i % 50 == 0:
-                    print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
-                        % (epoch, self.epochs, i, len(dataloader),
-                            errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
-                
+                if step % 50 == 0:
+                    print(
+                        f'[{epoch}/{self.epochs}][{step}/{len(dataloader)}]\t'
+                        f'Loss_D: {d_loss.item():.4f}\tLoss_G: {g_loss.item():.4f}\t'
+                        f'D(x): {real_score:.4f}\tD(G(z)): {fake_score_before_update:.4f} / {fake_score_after_update:.4f}'
+                    )
                 # Save Losses for plotting later
-                G_losses.append(errG.item())
-                D_losses.append(errD.item())
+                g_losses.append(g_loss.item())
+                d_losses.append(d_loss.item())
                 
                 # Check how the generator is doing by saving G's output on fixed_noise
-                if (iters % 500 == 0) or ((epoch == self.epochs-1) and (i == len(dataloader)-1)):
+                if (iters % 500 == 0) or ((epoch == self.epochs-1) and (step == len(dataloader)-1)):
                     with torch.no_grad():
-                        fake = dcgan.generator(fixed_noise).detach().cpu()
-                    img_list.append(make_grid(fake, padding=2, normalize=True))
+                        gen_image = self.generator(fixed_noise).detach().cpu()
+                    img_list.append(make_grid(gen_image, padding=2, normalize=True))
                     
                 iters += 1
 
+        self.plot_loss_curves(g_losses=g_losses, d_losses=d_losses)
+        self.visualize_progression(img_list=img_list, dataloader=dataloader)
+        
 
-        ######################################################################
-        # Results
-        # -------
-        # 
-        # Finally, lets check out how we did. Here, we will look at three
-        # different results. First, we will see how D and G’s losses changed
-        # during training. Second, we will visualize G’s output on the fixed_noise
-        # batch for every epoch. And third, we will look at a batch of real data
-        # next to a batch of fake data from G.
-        # 
-        # **Loss versus training iteration**
-        # 
-        # Below is a plot of D & G’s losses versus training iterations.
-        # 
+    def discriminator_step(self, real_image, real_label, fake_label, batch_size):
+        """
+            Update Discriminator: maximize log(D(x)) + log(1 - D(G(z)))
+        """
+        ## Train with all-real batch
+        self.discriminator.zero_grad()
+        real_label = torch.full((batch_size, ), real_label, dtype=torch.float, device=self.device)
+        output = self.discriminator(real_image).view(-1)
+        real_loss = self.criterion(output, real_label)
+        real_loss.backward()
+        real_score = output.mean().item()
 
-        plt.figure(figsize=(10,5))
+        ## Train with all-fake batch
+        z = torch.randn(batch_size, self.latent_dim, device=self.device)
+        gen_image = self.generator(z)
+        fake_label = torch.full((batch_size, ), fake_label, dtype=torch.float, device=self.device)
+        output = self.discriminator(gen_image.detach()).view(-1)
+        fake_loss = self.criterion(output, fake_label)
+        fake_loss.backward()
+        fake_score_before_update = output.mean().item()
+        d_loss = real_loss + fake_loss
+        self.d_optimizer.step()
+
+        return d_loss, gen_image, real_score, fake_score_before_update
+    
+    def generator_step(self, gen_image, real_label, batch_size):
+        """
+            Update Generator: maximize log(D(G(z)))
+        """
+        self.generator.zero_grad()
+        real_label = torch.full((batch_size, ), real_label, dtype=torch.float, device=self.device)  # fake labels are real for generator cost
+        output = self.discriminator(gen_image).view(-1)
+        g_loss = self.criterion(output, real_label)
+        g_loss.backward()
+        fake_score_after_update = output.mean().item()
+        self.g_optimizer.step()
+        
+        return g_loss, fake_score_after_update   
+    
+    def plot_loss_curves(self, g_losses, d_losses):
+        """
+            Loss versus training iteration
+        """
+        plt.figure(figsize=(10, 5))
         plt.title("Generator and Discriminator Loss During Training")
-        plt.plot(G_losses,label="G")
-        plt.plot(D_losses,label="D")
+        plt.plot(g_losses,label="Generator")
+        plt.plot(d_losses,label="Discriminator")
         plt.xlabel("iterations")
         plt.ylabel("Loss")
         plt.legend()
         plt.show()
 
-
-        ######################################################################
-        # **Visualization of G’s progression**
-        # 
-        # Remember how we saved the generator’s output on the fixed_noise batch
-        # after every epoch of training. Now, we can visualize the training
-        # progression of G with an animation. Press the play button to start the
-        # animation.
-        # 
-
-        #%%capture
+    def visualize_progression(self, img_list, dataloader):
+        """
+            Visualize the training progression of Generator with an animation.
+        """
         fig = plt.figure(figsize=(8,8))
         plt.axis("off")
         ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
@@ -267,18 +255,19 @@ class DCGAN(nn.Module):
         real_batch = next(iter(dataloader))
 
         # Plot the real images
-        plt.figure(figsize=(15,15))
-        plt.subplot(1,2,1)
+        plt.figure(figsize=(15, 15))
+        plt.subplot(1, 2, 1)
         plt.axis("off")
         plt.title("Real Images")
-        plt.imshow(np.transpose(make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
+        plt.imshow(np.transpose(make_grid(real_batch[0].to(self.device)[:64], padding=5, normalize=True).cpu(),(1, 2, 0)))
 
-        # Plot the fake images from the last epoch
-        plt.subplot(1,2,2)
+        # Plot the Generated images from the last epoch
+        plt.subplot(1, 2, 2)
         plt.axis("off")
-        plt.title("Fake Images")
-        plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+        plt.title("Gen Images")
+        plt.imshow(np.transpose(img_list[-1],(1, 2, 0)))
         plt.show()
+    
 
 if __name__ == '__main__':
     set_seed()
@@ -306,15 +295,18 @@ if __name__ == '__main__':
 
     ## Training parameters ## 
     latent_dim = 128
+    epochs = 5
 
     dcgan = DCGAN(feature_size=feature_size, device=device, 
-              config={'latent_dim': latent_dim, 
-                      'channels': channels, 
-                      'image_size': image_size,}).to(device)
+            config={'latent_dim': latent_dim, 
+                    'channels': channels, 
+                    'image_size': image_size,}, epochs=epochs).to(device)
 
     train = True
-    # ##### 1. Train the dcgan #####
+    ##### 1. Train the dcgan #####
     if train:
         dcgan.learn(dataloader=dataloader)
 
-    
+    ##### 2. Generate image from random noise #####
+    else:
+        pass

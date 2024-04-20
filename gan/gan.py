@@ -159,6 +159,7 @@ class GAN(nn.Module):
             nn.init.constant_(m.bias.data, 0)
     
     def learn(self, dataloader: DataLoader, log_dir, patience=8, delta=0):
+        # NOTE: this is a bug. can't do this.
         batch_size = dataloader.batch_size
         real_label = torch.ones((batch_size, 1), device=self.device).detach()
         fake_label = torch.zeros((batch_size, 1), device=self.device).detach()
@@ -275,7 +276,7 @@ if __name__ == '__main__':
                       'image_size': image_size,}).to(device)
     
     train = True
-    # ##### 1. Train the gan #####
+    ##### 1. Train the gan #####
     if train:
         gan.learn(dataloader=dataloader, log_dir=log_dir)
     
