@@ -168,7 +168,7 @@ class GAN(nn.Module):
         generate_random_images_and_save(self, num_images=16, log_dir=log_dir, image_size=self.image_size, latent_dim=self.latent_dim)
 
         best_loss = float('inf')
-        patience_counter = 0
+        # patience_counter = 0
         for epoch in range(self.epochs):
             total_loss = 0
             model_saved_this_epoch = False
@@ -199,16 +199,16 @@ class GAN(nn.Module):
                 best_loss = avg_loss
                 torch.save(self.state_dict(), os.path.join(log_dir, 'best_model.pth'))
                 model_saved_this_epoch = True
-                patience_counter = 0
-            else:
-                patience_counter += 1
+                # patience_counter = 0
+            # else:
+                # patience_counter += 1
 
             self.eval()
             generate_random_images_and_save(self, num_images=16, log_dir=log_dir, image_size=self.image_size, latent_dim=self.latent_dim)
 
-            if patience_counter >= patience:
-                print(f"No improvement in validation loss for {patience} consecutive epochs. Stopping early.")
-                break
+            # if patience_counter >= patience:
+            #     print(f"No improvement in validation loss for {patience} consecutive epochs. Stopping early.")
+            #     break
 
             if model_saved_this_epoch:
                 print(f"New best model saved with loss {best_loss}")

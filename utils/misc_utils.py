@@ -45,6 +45,8 @@ def generate_random_images_and_save(model, num_images, log_dir, image_size=28, l
     collage.save(collage_file_path)
     print(f"Random sample saved to {collage_file_path}")
 
+    return collage
+
 def generate_uniformly_distributed_images_and_save(model, num_images, z_ranges, log_dir, image_size=28, latent_dim=2):
     model.eval()
     

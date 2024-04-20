@@ -19,7 +19,9 @@ from torchvision.datasets import MNIST, CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from IPython.display import HTML
-from utils.misc_utils import set_seed, plot_data_from_dataloader
+from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
+
+plt.rcParams['animation.embed_limit'] = 40
 
 class DCGAN(nn.Module):
     def __init__(self,
@@ -35,7 +37,7 @@ class DCGAN(nn.Module):
         self.config = {
             'channels': 1,
             'image_size': 28,   # Default for MNIST
-            'latent_dim': 2,
+            'latent_dim': 128,
             ## For Fully Connected Network ##
             'generator_hidden_sizes': [128, 256, 512, 1024],
             'discriminator_hidden_sizes': [512, 256],
@@ -44,11 +46,12 @@ class DCGAN(nn.Module):
             'g_kernel_sizes': [4, 4, 3],
             'g_strides': [2, 2, 1],
             'g_paddings': [1, 1, 1],
+            'g_activation': nn.ReLU(),
             'd_hidden_channels': [16, 32, 64, 128],
             'd_kernel_sizes': [3, 3, 3, 3],
             'd_strides': [2, 2, 2, 2],
             'd_paddings': [1, 1, 1, 1],
-            'activation': nn.LeakyReLU(0.2)
+            'd_activation': nn.LeakyReLU(0.2)
         }
 
         if config is not None:
@@ -58,7 +61,8 @@ class DCGAN(nn.Module):
         self.image_size = self.config.get('image_size')
         self.latent_dim = self.config.get('latent_dim')
         self.architecture_type = self.config.get('type')
-        self.activation = self.config.get('activation')
+        self.g_activation = self.config.get('g_activation')
+        self.d_activation = self.config.get('d_activation')
 
         self.generator = self.create_cnn_generator()
         self.discriminator = self.create_cnn_discriminator()
@@ -87,7 +91,7 @@ class DCGAN(nn.Module):
                                              kernel_size=kernel_sizes[i], stride=strides[i],
                                              padding=paddings[i]))
             layers.append(nn.BatchNorm2d(num_features=hidden_channels[i+1]))
-            layers.append(self.activation)
+            layers.append(self.g_activation)
         layers.append(nn.ConvTranspose2d(in_channels=hidden_channels[-1], out_channels=self.channels,
                                          kernel_size=kernel_sizes[-1], stride=strides[-1], 
                                          padding=paddings[-1]))
@@ -109,9 +113,9 @@ class DCGAN(nn.Module):
             layers.append(nn.Conv2d(in_channels=in_channels, out_channels=hidden_channels[i],
                                     kernel_size=kernel_sizes[i], stride=strides[i],
                                     padding=paddings[i]))
-            layers.append(self.activation)
-            layers.append(nn.Dropout2d(0.25))
             layers.append(nn.BatchNorm2d(num_features=hidden_channels[i], momentum=0.8))
+            layers.append(self.d_activation)
+            # layers.append(nn.Dropout2d(0.25))
             in_channels = hidden_channels[i]
             image_size = (image_size - kernel_sizes[i] + 2 * paddings[i]) // strides[i] + 1
         final_num_features = hidden_channels[-1] * image_size * image_size
@@ -142,7 +146,6 @@ class DCGAN(nn.Module):
         img_list = []
         g_losses = []
         d_losses = []
-        iters = 0
 
         print("Starting Training Loop...")
         for epoch in range(self.epochs):
@@ -175,14 +178,12 @@ class DCGAN(nn.Module):
                 # Save Losses for plotting later
                 g_losses.append(g_loss.item())
                 d_losses.append(d_loss.item())
+            
+            with torch.no_grad():
+                gen_image = self.generator(fixed_noise).detach().cpu()
+                img = make_grid(gen_image, padding=2, normalize=True)
                 
-                # Check how the generator is doing by saving G's output on fixed_noise
-                if (iters % 500 == 0) or ((epoch == self.epochs-1) and (step == len(dataloader)-1)):
-                    with torch.no_grad():
-                        gen_image = self.generator(fixed_noise).detach().cpu()
-                    img_list.append(make_grid(gen_image, padding=2, normalize=True))
-                    
-                iters += 1
+                img_list.append(img)
 
         self.plot_loss_curves(g_losses=g_losses, d_losses=d_losses)
         self.visualize_progression(img_list=img_list, dataloader=dataloader)
@@ -274,6 +275,7 @@ if __name__ == '__main__':
     ##### 0. Load Dataset #####
     dataset_name = 'MNIST'
     batch_size = 128
+    model_name = 'dcgan'
 
     if dataset_name == 'MNIST':
         channels = 1
@@ -287,6 +289,7 @@ if __name__ == '__main__':
         dataset = CIFAR10(root='./data', transform=transform, download=True)
     feature_size = channels * image_size * image_size
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
+    
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'logs/{dataset_name}/')
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
@@ -295,7 +298,7 @@ if __name__ == '__main__':
 
     ## Training parameters ## 
     latent_dim = 128
-    epochs = 5
+    epochs = 100
 
     dcgan = DCGAN(feature_size=feature_size, device=device, 
             config={'latent_dim': latent_dim, 
@@ -303,7 +306,7 @@ if __name__ == '__main__':
                     'image_size': image_size,}, epochs=epochs).to(device)
 
     train = True
-    ##### 1. Train the dcgan #####
+    ##### 1. Train the model #####
     if train:
         dcgan.learn(dataloader=dataloader)
 
