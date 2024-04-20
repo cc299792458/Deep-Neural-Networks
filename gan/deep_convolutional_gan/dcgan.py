@@ -14,7 +14,7 @@ import torch.optim as optim
 import torch.utils.data
 
 from torch.utils.data import DataLoader
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize
 
@@ -183,8 +183,22 @@ class DCGAN(nn.Module):
                 gen_image = self.generator(fixed_noise).detach().cpu()
                 img = make_grid(gen_image, padding=2, normalize=True)
                 
-                img_list.append(img)
+                samples_dir = os.path.join(log_dir, 'samples')
+                os.makedirs(samples_dir, exist_ok=True)
+                
+                sample_path = os.path.join(samples_dir, f'epoch_{epoch}_sample.png')
+                save_image(img, sample_path)
 
+                img_list.append(img)
+            
+            if epoch % 10 == 0:
+                models_dir = os.path.join(log_dir, 'models')
+                os.makedirs(models_dir, exist_ok=True)
+
+                model_path = os.path.join(models_dir, f'epoch_{epoch}_model.pth')
+                torch.save(self.state_dict(), model_path)
+
+        torch.save(self.state_dict(), os.path.join(log_dir, '/models/final_model.pth'))
         self.plot_loss_curves(g_losses=g_losses, d_losses=d_losses)
         self.visualize_progression(img_list=img_list, dataloader=dataloader)
         
@@ -300,7 +314,7 @@ if __name__ == '__main__':
     latent_dim = 128
     epochs = 100
 
-    dcgan = DCGAN(feature_size=feature_size, device=device, 
+    dcgan = DCGAN(feature_size=feature_size, device=device,
             config={'latent_dim': latent_dim, 
                     'channels': channels, 
                     'image_size': image_size,}, epochs=epochs).to(device)
@@ -308,8 +322,17 @@ if __name__ == '__main__':
     train = True
     ##### 1. Train the model #####
     if train:
-        dcgan.learn(dataloader=dataloader)
+        dcgan.learn(dataloader=dataloader, log_dir=log_dir)
 
     ##### 2. Generate image from random noise #####
     else:
-        pass
+        ## Load Model ##
+        dcgan.load_state_dict(torch.load(os.path.join(log_dir, f'/models/final_model.pth')))
+
+        num_images = 400
+        z_ranges = ((-1, 1), (-1, 1))
+        generate_random_images_and_save(dcgan, 
+                                        num_images=num_images, 
+                                        log_dir=log_dir, 
+                                        image_size=image_size, 
+                                        latent_dim=latent_dim)
