@@ -1,17 +1,27 @@
+"""
+    Generative Adversarial Networks
+"""
+
 import os
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.parallel
 import torch.optim as optim
+import torch.utils.data
 
 from torch.utils.data import DataLoader
-from torchvision.transforms import Compose, ToTensor, Normalize
-from torchvision.transforms.functional import to_pil_image
+from torchvision.utils import make_grid, save_image
 from torchvision.datasets import MNIST, CIFAR10
+from torchvision.transforms import Compose, ToTensor, Normalize
 
-from tqdm import tqdm
-from utils.misc_utils import set_seed, generate_random_images_and_save
+from IPython.display import HTML
+from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
+
+plt.rcParams['animation.embed_limit'] = 40
 
 
 class GAN(nn.Module):
@@ -21,28 +31,16 @@ class GAN(nn.Module):
                 device: str = 'cpu', 
                 lr: float = 2e-4, 
                 betas: tuple[float, float] = (0.5, 0.999),
-                epochs: int = 200) -> None:
+                epochs: int = 50) -> None:
         super(GAN, self).__init__()
         self.device = device
         self.feature_size = feature_size
         self.config = {
-            'type': 'fc',
             'channels': 1,
             'image_size': 28,   # Default for MNIST
-            'latent_dim': 2,
-            ## For Fully Connected Network ##
-            'generator_hidden_sizes': [128, 256, 512, 1024],
-            'discriminator_hidden_sizes': [512, 256],
-            ## For Convolutional Network ##
-            'g_hidden_channels': [128, 128, 64],
-            'g_kernel_sizes': [4, 4, 3],
-            'g_strides': [2, 2, 1],
-            'g_paddings': [1, 1, 1],
-            'd_hidden_channels': [16, 32, 64, 128],
-            'd_kernel_sizes': [3, 3, 3, 3],
-            'd_strides': [2, 2, 2, 2],
-            'd_paddings': [1, 1, 1, 1],
-            'activation': nn.LeakyReLU(0.2)
+            'latent_dim': 128,
+            'g_hidden_sizes': [128, 256, 512, 1024],
+            'd_hidden_sizes': [512, 256],
         }
 
         if config is not None:
@@ -51,40 +49,35 @@ class GAN(nn.Module):
         self.channels = self.config.get('channels')
         self.image_size = self.config.get('image_size')
         self.latent_dim = self.config.get('latent_dim')
-        self.architecture_type = self.config.get('type')
-        self.activation = self.config.get('activation')
+        self.g_activation = self.config.get('g_activation')
+        self.d_activation = self.config.get('d_activation')
 
-        if self.architecture_type == 'fc':
-            self.generator = self.create_fc_generator()
-            self.discriminator = self.create_fc_discriminator()
-        elif self.architecture_type == 'cnn':
-            self.generator = self.create_cnn_generator()
-            self.discriminator = self.create_cnn_discriminator()
-            self.generator.apply(self.weights_init)
-            self.discriminator.apply(self.weights_init)
-        else:
-            raise ValueError("Unsupported architecture type")
+        self.generator = self.create_generator()
+        self.discriminator = self.create_discriminator()
+        self.generator.apply(self.weights_init)
+        self.discriminator.apply(self.weights_init)
 
         self.g_optimizer = optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
         self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
+        self.criterion = nn.BCELoss()
         self.epochs = epochs
     
-    def create_fc_generator(self):
+    def create_generator(self):
         layers = []
         hidden_sizes = self.config['generator_hidden_sizes']
 
         input_size = self.latent_dim
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
-            layers.append(nn.BatchNorm1d(hidden_size, momentum=0.8))
-            layers.append(self.activation)
+            layers.append(nn.BatchNorm1d(hidden_size))
+            layers.append(self.g_activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.feature_size))
-        layers.append(nn.BatchNorm1d(self.feature_size, momentum=0.8))
+        layers.append(nn.BatchNorm1d(self.feature_size))
         layers.append(nn.Tanh())
         return nn.Sequential(*layers)
 
-    def create_fc_discriminator(self):
+    def create_discriminator(self):
         layers = []
         hidden_sizes = self.config['discriminator_hidden_sizes']
         
@@ -92,62 +85,11 @@ class GAN(nn.Module):
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
             # layers.append(nn.BatchNorm1d(hidden_size))
-            layers.append(self.activation)
+            layers.append(self.d_activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, 1))
         # layers.append(nn.BatchNorm1d(1))
         layers.append(nn.Sigmoid())
-        return nn.Sequential(*layers)
-
-    def create_cnn_generator(self):
-        layers = []
-        init_size = self.image_size // 4   # 28 // 4 = 7
-        hidden_channels = self.config['g_hidden_channels']
-        kernel_sizes = self.config['g_kernel_sizes']
-        strides = self.config['g_strides']
-        paddings = self.config['g_paddings']
-
-        layers.append(nn.Linear(self.latent_dim, hidden_channels[0] * init_size * init_size))
-        # Seems like Unflatten can be replaced by a ConvTranspose2d
-        layers.append(nn.Unflatten(1, (hidden_channels[0], init_size, init_size)))
-        layers.append(nn.BatchNorm2d(hidden_channels[0]))
-        for i in range(len(hidden_channels) - 1):
-            layers.append(nn.ConvTranspose2d(hidden_channels[i], hidden_channels[i+1],
-                                             kernel_size=kernel_sizes[i], stride=strides[i],
-                                             padding=paddings[i]))
-            layers.append(nn.BatchNorm2d(num_features=hidden_channels[i+1]))
-            layers.append(self.activation)
-        layers.append(nn.ConvTranspose2d(in_channels=hidden_channels[-1], out_channels=self.channels,
-                                         kernel_size=kernel_sizes[-1], stride=strides[-1], 
-                                         padding=paddings[-1]))
-        layers.append(nn.BatchNorm2d(num_features=self.channels, momentum=0.8))
-        layers.append(nn.Tanh())
-
-        return nn.Sequential(*layers)
-
-    def create_cnn_discriminator(self):
-        layers = []
-        hidden_channels = self.config['d_hidden_channels']
-        kernel_sizes = self.config['d_kernel_sizes']
-        strides = self.config['d_strides']
-        paddings = self.config['d_paddings']
-        in_channels = self.channels
-        image_size = self.image_size
-
-        for i in range(len(hidden_channels)):
-            layers.append(nn.Conv2d(in_channels=in_channels, out_channels=hidden_channels[i],
-                                    kernel_size=kernel_sizes[i], stride=strides[i],
-                                    padding=paddings[i]))
-            layers.append(self.activation)
-            layers.append(nn.Dropout2d(0.25))
-            layers.append(nn.BatchNorm2d(num_features=hidden_channels[i], momentum=0.8))
-            in_channels = hidden_channels[i]
-            image_size = (image_size - kernel_sizes[i] + 2 * paddings[i]) // strides[i] + 1
-        final_num_features = hidden_channels[-1] * image_size * image_size
-        layers.append(nn.Flatten())
-        layers.append(nn.Linear(in_features=final_num_features, out_features=1))
-        layers.append(nn.Sigmoid())
-
         return nn.Sequential(*layers)
     
     def weights_init(self, m):
@@ -158,89 +100,179 @@ class GAN(nn.Module):
             nn.init.normal_(m.weight.data, 1.0, 0.02)
             nn.init.constant_(m.bias.data, 0)
     
-    def learn(self, dataloader: DataLoader, log_dir, patience=8, delta=0):
-        # NOTE: this is a bug. can't do this.
-        batch_size = dataloader.batch_size
-        real_label = torch.ones((batch_size, 1), device=self.device).detach()
-        fake_label = torch.zeros((batch_size, 1), device=self.device).detach()
-        
-        self.eval()
-        generate_random_images_and_save(self, num_images=16, log_dir=log_dir, image_size=self.image_size, latent_dim=self.latent_dim)
+    def learn(self, dataloader: DataLoader, log_dir=None):
+        # Create batch of latent vectors that we will use to visualize
+        # the progression of the generator
+        fixed_noise = self.sample_z(batch_size=64)
 
-        best_loss = float('inf')
-        # patience_counter = 0
+        # Establish convention for real and fake labels during training
+        real_label = 1.
+        fake_label = 0.
+
+        # Lists to keep track of progress
+        img_list = []
+        g_losses = []
+        d_losses = []
+
+        print("Starting Training Loop...")
         for epoch in range(self.epochs):
-            total_loss = 0
-            model_saved_this_epoch = False
-
-            loop = tqdm(enumerate(dataloader), total=len(dataloader), leave=True)
-            self.train()
-            for step, (real_image, _) in loop:
+            for step, (real_image, _) in enumerate(dataloader):
                 real_image = real_image.to(self.device)
-                if self.architecture_type == 'fc':
-                    real_image = real_image.reshape(-1, self.feature_size)
+                batch_size = real_image.shape[0]
+                # Update Discriminator
+                d_loss, gen_image, real_score, fake_score_before_update = self.discriminator_step(
+                    real_image=real_image, 
+                    real_label=real_label, 
+                    fake_label=fake_label,
+                    batch_size=batch_size
+                )
 
-                ## Train Generator ##
-                g_loss, gen_image = self.generator_step(real_label=real_label, batch_size=batch_size, retain_graph=True)
-
-                ## Train Discriminator ##
-                d_loss = self.discriminator_step(real_image=real_image, gen_image=gen_image, real_label=real_label, fake_label=fake_label)
+                # Update Generator
+                g_loss, fake_score_after_update = self.generator_step(
+                    gen_image=gen_image, 
+                    real_label=real_label,
+                    batch_size=batch_size
+                )
                 
-                step_loss = g_loss + d_loss
-                total_loss += step_loss
-                
+                # Output training stats
                 if step % 50 == 0:
-                    loop.set_description(f"Epoch [{epoch}/{self.epochs}]")
-                    loop.set_postfix(loss=step_loss)
+                    print(
+                        f'[{epoch}/{self.epochs}][{step}/{len(dataloader)}]\t'
+                        f'Loss_D: {d_loss.item():.4f}\tLoss_G: {g_loss.item():.4f}\t'
+                        f'D(x): {real_score:.4f}\tD(G(z)): {fake_score_before_update:.4f} / {fake_score_after_update:.4f}'
+                    )
+                # Save Losses for plotting later
+                g_losses.append(g_loss.item())
+                d_losses.append(d_loss.item())
+            
+            with torch.no_grad():
+                gen_image = self.generator(fixed_noise).detach().cpu()
+                img = make_grid(gen_image, padding=2, normalize=True)
+                
+                samples_dir = os.path.join(log_dir, 'samples')
+                os.makedirs(samples_dir, exist_ok=True)
+                
+                sample_path = os.path.join(samples_dir, f'epoch_{epoch}_sample.png')
+                save_image(img, sample_path)
 
-            avg_loss = total_loss / len(loop)
+                img_list.append(img)
+            
+            if epoch % 10 == 0:
+                models_dir = os.path.join(log_dir, 'models')
+                os.makedirs(models_dir, exist_ok=True)
 
-            if avg_loss < best_loss - delta:
-                best_loss = avg_loss
-                torch.save(self.state_dict(), os.path.join(log_dir, 'best_model.pth'))
-                model_saved_this_epoch = True
-                # patience_counter = 0
-            # else:
-                # patience_counter += 1
+                model_path = os.path.join(models_dir, f'epoch_{epoch}_model.pth')
+                torch.save(self.state_dict(), model_path)
 
-            self.eval()
-            generate_random_images_and_save(self, num_images=16, log_dir=log_dir, image_size=self.image_size, latent_dim=self.latent_dim)
+        models_dir = os.path.join(log_dir, 'models')
+        os.makedirs(models_dir, exist_ok=True)
+        torch.save(self.state_dict(), os.path.join(models_dir, 'final_model.pth'))
+        self.plot_loss_curves(g_losses=g_losses, d_losses=d_losses, log_dir=log_dir)
+        self.visualize_progression(img_list=img_list, dataloader=dataloader, log_dir=log_dir)
+        
 
-            # if patience_counter >= patience:
-            #     print(f"No improvement in validation loss for {patience} consecutive epochs. Stopping early.")
-            #     break
+    def discriminator_step(self, real_image, real_label, fake_label, batch_size):
+        """
+            Update Discriminator: maximize log(D(x)) + log(1 - D(G(z)))
+        """
+        ## Train with all-real batch
+        self.discriminator.zero_grad()
+        real_label = torch.full((batch_size, ), real_label, dtype=torch.float, device=self.device)
+        output = self.discriminator(real_image).view(-1)
+        real_loss = self.criterion(output, real_label)
+        real_loss.backward()
+        real_score = output.mean().item()
 
-            if model_saved_this_epoch:
-                print(f"New best model saved with loss {best_loss}")
-
-    def generator_step(self, real_label, batch_size, retain_graph=False):
-        self.g_optimizer.zero_grad()
-        z = torch.randn((batch_size, self.latent_dim), device=self.device)
+        ## Train with all-fake batch
+        z = self.sample_z(batch_size=batch_size)
         gen_image = self.generator(z)
-        g_loss = F.binary_cross_entropy(self.discriminator(gen_image), real_label)
-        g_loss.backward(retain_graph=retain_graph)
-        self.g_optimizer.step()
-
-        return g_loss.item(), gen_image
-    
-    def discriminator_step(self, real_image, gen_image, real_label, fake_label, retain_graph=False):
-        self.d_optimizer.zero_grad()
-
-        real_loss = F.binary_cross_entropy(self.discriminator(real_image), real_label)
-        fake_loss = F.binary_cross_entropy(self.discriminator(gen_image), fake_label)
-        d_loss = (real_loss + fake_loss) / 2
-        d_loss.backward(retain_graph=retain_graph)
+        fake_label = torch.full((batch_size, ), fake_label, dtype=torch.float, device=self.device)
+        output = self.discriminator(gen_image.detach()).view(-1)
+        fake_loss = self.criterion(output, fake_label)
+        fake_loss.backward()
+        fake_score_before_update = output.mean().item()
+        d_loss = real_loss + fake_loss
         self.d_optimizer.step()
 
-        return d_loss.item()
+        return d_loss, gen_image, real_score, fake_score_before_update
+    
+    def generator_step(self, gen_image, real_label, batch_size):
+        """
+            Update Generator: maximize log(D(G(z)))
+        """
+        self.generator.zero_grad()
+        real_label = torch.full((batch_size, ), real_label, dtype=torch.float, device=self.device)  # fake labels are real for generator cost
+        output = self.discriminator(gen_image).view(-1)
+        g_loss = self.criterion(output, real_label)
+        g_loss.backward()
+        fake_score_after_update = output.mean().item()
+        self.g_optimizer.step()
+        
+        return g_loss, fake_score_after_update   
+    
+    def sample_z(self, batch_size):
+        z = torch.randn(batch_size, self.latent_dim, device=self.device)
 
-    def sample(self, z):
+        return z
+    
+    def sample(self, z=None, batch_size=None):
+        z = self.sample_z(batch_size=batch_size) if z == None else z
         output = self.generator(z)
-        if self.architecture_type == 'fc':
-            output = output.reshape(-1, self.channels, self.image_size, self.image_size)
 
         return output
     
+    def plot_loss_curves(self, g_losses, d_losses, log_dir):
+        """
+            Loss versus training iteration
+        """
+        plt.figure(figsize=(10, 5))
+        plt.title("Generator and Discriminator Loss During Training")
+        plt.plot(g_losses,label="Generator")
+        plt.plot(d_losses,label="Discriminator")
+        plt.xlabel("iterations")
+        plt.ylabel("Loss")
+        plt.legend()
+
+        loss_fig_path = os.path.join(log_dir, 'loss.png')
+        plt.savefig(loss_fig_path)
+
+        plt.show()
+        plt.close()
+
+    def visualize_progression(self, img_list, dataloader, log_dir):
+        """
+            Visualize the training progression of Generator with an animation.
+        """
+        fig = plt.figure(figsize=(8, 8))
+        plt.axis("off")
+        ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
+        ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+
+        ani_path = os.path.join(log_dir, 'progression.gif')
+        ani.save(ani_path, writer='imagemagick')
+        
+        HTML(ani.to_jshtml())
+
+        # Grab a batch of real images from the dataloader
+        real_batch = next(iter(dataloader))
+
+        # Plot the real images
+        plt.figure(figsize=(15, 8))
+        plt.subplot(1, 2, 1)
+        plt.axis("off")
+        plt.title("Real Images")
+        plt.imshow(np.transpose(make_grid(real_batch[0].to(self.device)[:64], padding=5, normalize=True).cpu(),(1, 2, 0)))
+
+        # Plot the Generated images from the last epoch
+        plt.subplot(1, 2, 2)
+        plt.axis("off")
+        plt.title("Gen Images")
+        plt.imshow(np.transpose(img_list[-1],(1, 2, 0)))
+
+        comparision_fig_path = os.path.join(log_dir, 'comparision.png')
+        plt.savefig(comparision_fig_path)
+
+        plt.show()
 
 if __name__ == '__main__':
     set_seed()
@@ -260,34 +292,35 @@ if __name__ == '__main__':
         dataset = CIFAR10(root='./data', transform=transform, download=True)
     feature_size = channels * image_size * image_size
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
+    
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'logs/{dataset_name}/')
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # plot_data_from_dataloader(dataloader=dataloader, device=device)
 
     ## Training parameters ## 
-    model_type = 'cnn'
     latent_dim = 128
+    epochs = 100
 
-    gan = GAN(feature_size=feature_size, device=device, 
-              config={'type': model_type, 
-                      'latent_dim': latent_dim, 
-                      'channels': channels, 
-                      'image_size': image_size,}).to(device)
-    
+    dcgan = GAN(feature_size=feature_size, device=device,
+            config={'latent_dim': latent_dim, 
+                    'channels': channels, 
+                    'image_size': image_size,}, epochs=epochs).to(device)
+
     train = True
-    ##### 1. Train the gan #####
+    ##### 1. Train the model #####
     if train:
-        gan.learn(dataloader=dataloader, log_dir=log_dir)
-    
+        dcgan.learn(dataloader=dataloader, log_dir=log_dir)
+
     ##### 2. Generate image from random noise #####
     else:
         ## Load Model ##
-        gan.load_state_dict(torch.load(os.path.join(log_dir, f'best_model.pth')))
+        dcgan.load_state_dict(torch.load(os.path.join(log_dir, f'/models/final_model.pth')))
 
         num_images = 400
         z_ranges = ((-1, 1), (-1, 1))
-        generate_random_images_and_save(gan, 
+        generate_random_images_and_save(dcgan, 
                                         num_images=num_images, 
                                         log_dir=log_dir, 
                                         image_size=image_size, 

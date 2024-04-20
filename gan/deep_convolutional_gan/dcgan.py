@@ -38,9 +38,6 @@ class DCGAN(nn.Module):
             'channels': 1,
             'image_size': 28,   # Default for MNIST
             'latent_dim': 128,
-            ## For Fully Connected Network ##
-            'g_hidden_sizes': [128, 256, 512, 1024],
-            'd_hidden_sizes': [512, 256],
             ## For Convolutional Network ##
             'g_hidden_channels': [512, 256, 128, 64],
             'g_kernel_sizes': [4, 4, 4, 4, 1],
@@ -60,7 +57,6 @@ class DCGAN(nn.Module):
         self.channels = self.config.get('channels')
         self.image_size = self.config.get('image_size')
         self.latent_dim = self.config.get('latent_dim')
-        self.architecture_type = self.config.get('type')
         self.g_activation = self.config.get('g_activation')
         self.d_activation = self.config.get('d_activation')
 
@@ -144,7 +140,7 @@ class DCGAN(nn.Module):
     def learn(self, dataloader: DataLoader, log_dir=None):
         # Create batch of latent vectors that we will use to visualize
         # the progression of the generator
-        fixed_noise = torch.randn(64, self.latent_dim, 1, 1, device=self.device)
+        fixed_noise = self.sample_z(batch_size=64)
 
         # Establish convention for real and fake labels during training
         real_label = 1.
@@ -225,7 +221,7 @@ class DCGAN(nn.Module):
         real_score = output.mean().item()
 
         ## Train with all-fake batch
-        z = torch.randn(batch_size, self.latent_dim, 1, 1, device=self.device)
+        z = self.sample_z(batch_size=batch_size)
         gen_image = self.generator(z)
         fake_label = torch.full((batch_size, ), fake_label, dtype=torch.float, device=self.device)
         output = self.discriminator(gen_image.detach()).view(-1)
@@ -250,6 +246,19 @@ class DCGAN(nn.Module):
         self.g_optimizer.step()
         
         return g_loss, fake_score_after_update   
+    
+    def sample_z(self, batch_size):
+        z = torch.randn(batch_size, self.latent_dim, 1, 1, device=self.device)
+
+        return z
+    
+    def sample(self, z=None, batch_size=None):
+        z = self.sample_z(batch_size=batch_size) if z == None else z
+        while len(z.shape) < 4:
+            z = z.unsqueeze(-1)
+        output = self.generator(z)
+
+        return output
     
     def plot_loss_curves(self, g_losses, d_losses, log_dir):
         """
@@ -309,7 +318,6 @@ if __name__ == '__main__':
     ##### 0. Load Dataset #####
     dataset_name = 'MNIST'
     batch_size = 128
-    model_name = 'dcgan'
 
     if dataset_name == 'MNIST':
         channels = 1
@@ -332,14 +340,14 @@ if __name__ == '__main__':
 
     ## Training parameters ## 
     latent_dim = 128
-    epochs = 1
+    epochs = 100
 
     dcgan = DCGAN(feature_size=feature_size, device=device,
             config={'latent_dim': latent_dim, 
                     'channels': channels, 
                     'image_size': image_size,}, epochs=epochs).to(device)
 
-    train = True
+    train = False
     ##### 1. Train the model #####
     if train:
         dcgan.learn(dataloader=dataloader, log_dir=log_dir)
@@ -347,7 +355,8 @@ if __name__ == '__main__':
     ##### 2. Generate image from random noise #####
     else:
         ## Load Model ##
-        dcgan.load_state_dict(torch.load(os.path.join(log_dir, f'/models/final_model.pth')))
+        model_path = os.path.join(log_dir, 'models/final_model.pth')
+        dcgan.load_state_dict(torch.load(model_path))
 
         num_images = 400
         z_ranges = ((-1, 1), (-1, 1))
