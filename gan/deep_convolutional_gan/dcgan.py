@@ -41,13 +41,11 @@ class DCGAN(GAN):
             'g_strides': [1, 2, 2, 2, 1],
             'g_paddings': [0, 1, 1, 1, 2],
             'g_activation': nn.ReLU(),
-            'g_optimizer_cls': optim.Adam,
             'd_hidden_channels': [64, 128, 256],
             'd_kernel_sizes': [4, 4, 4],
             'd_strides': [2, 2, 2, 1],
             'd_paddings': [1, 1, 2, 0],
             'd_activation': nn.LeakyReLU(0.2),
-            'd_optimizer_cls': optim.Adam
         }
 
         if config is not None:
