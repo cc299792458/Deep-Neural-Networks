@@ -35,12 +35,15 @@ class GAN(nn.Module):
         super(GAN, self).__init__()
         self.device = device
         self.feature_size = feature_size
+        
         self.config = {
             'channels': 1,
             'image_size': 28,   # Default for MNIST
             'latent_dim': 128,
             'g_hidden_sizes': [128, 256, 512, 1024],
+            'g_activation': nn.ReLU(),
             'd_hidden_sizes': [512, 256],
+            'd_activation': nn.LeakyReLU(0.2),
         }
 
         if config is not None:
@@ -60,11 +63,11 @@ class GAN(nn.Module):
         self.g_optimizer = optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
         self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
         self.criterion = nn.BCELoss()
-        self.epochs = epochs
+        self.epochs = epochs    
     
     def create_generator(self):
         layers = []
-        hidden_sizes = self.config['generator_hidden_sizes']
+        hidden_sizes = self.config['g_hidden_sizes']
 
         input_size = self.latent_dim
         for hidden_size in hidden_sizes:
@@ -75,21 +78,25 @@ class GAN(nn.Module):
         layers.append(nn.Linear(input_size, self.feature_size))
         layers.append(nn.BatchNorm1d(self.feature_size))
         layers.append(nn.Tanh())
+        layers.append(nn.Unflatten(1, (self.channels, self.image_size, self.image_size)))
+        
         return nn.Sequential(*layers)
 
     def create_discriminator(self):
         layers = []
-        hidden_sizes = self.config['discriminator_hidden_sizes']
-        
+        hidden_sizes = self.config['d_hidden_sizes']
+        layers.append(nn.Flatten())
+
         input_size = self.feature_size
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
-            # layers.append(nn.BatchNorm1d(hidden_size))
+            layers.append(nn.BatchNorm1d(hidden_size))
             layers.append(self.d_activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, 1))
         # layers.append(nn.BatchNorm1d(1))
         layers.append(nn.Sigmoid())
+
         return nn.Sequential(*layers)
     
     def weights_init(self, m):
@@ -301,7 +308,7 @@ if __name__ == '__main__':
 
     ## Training parameters ## 
     latent_dim = 128
-    epochs = 100
+    epochs = 200
 
     dcgan = GAN(feature_size=feature_size, device=device,
             config={'latent_dim': latent_dim, 
