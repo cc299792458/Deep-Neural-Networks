@@ -21,7 +21,7 @@ from torchvision.transforms import Compose, ToTensor, Normalize
 from IPython.display import HTML
 from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
 
-plt.rcParams['animation.embed_limit'] = 40
+plt.rcParams['animation.embed_limit'] = 100
 
 
 class GAN(nn.Module):
@@ -40,10 +40,12 @@ class GAN(nn.Module):
             'channels': 1,
             'image_size': 28,   # Default for MNIST
             'latent_dim': 128,
-            'g_hidden_sizes': [128, 256, 512, 1024],
-            'g_activation': nn.ReLU(),
-            'd_hidden_sizes': [512, 256],
+            'g_hidden_sizes': [256, 512, 1024],
+            'g_activation': nn.LeakyReLU(0.2),
+            'g_optimizer_cls': optim.Adam,
+            'd_hidden_sizes': [1024, 512, 256],
             'd_activation': nn.LeakyReLU(0.2),
+            'd_optimizer_cls': optim.Adam
         }
 
         if config is not None:
@@ -53,15 +55,17 @@ class GAN(nn.Module):
         self.image_size = self.config.get('image_size')
         self.latent_dim = self.config.get('latent_dim')
         self.g_activation = self.config.get('g_activation')
+        g_optimizer_cls = self.config.get('g_optimizer_cls')
         self.d_activation = self.config.get('d_activation')
+        d_optimizer_cls = self.config.get('d_optimizer_cls')
 
         self.generator = self.create_generator()
         self.discriminator = self.create_discriminator()
         self.generator.apply(self.weights_init)
         self.discriminator.apply(self.weights_init)
 
-        self.g_optimizer = optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
-        self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
+        self.g_optimizer = g_optimizer_cls(self.generator.parameters(), lr=lr, betas=betas)
+        self.d_optimizer = d_optimizer_cls(self.discriminator.parameters(), lr=lr, betas=betas)
         self.criterion = nn.BCELoss()
         self.epochs = epochs    
     
@@ -72,11 +76,11 @@ class GAN(nn.Module):
         input_size = self.latent_dim
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
-            layers.append(nn.BatchNorm1d(hidden_size))
+            # layers.append(nn.BatchNorm1d(hidden_size))
             layers.append(self.g_activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, self.feature_size))
-        layers.append(nn.BatchNorm1d(self.feature_size))
+        # layers.append(nn.BatchNorm1d(self.feature_size))
         layers.append(nn.Tanh())
         layers.append(nn.Unflatten(1, (self.channels, self.image_size, self.image_size)))
         
@@ -90,7 +94,8 @@ class GAN(nn.Module):
         input_size = self.feature_size
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(input_size, hidden_size))
-            layers.append(nn.BatchNorm1d(hidden_size))
+            # layers.append(nn.BatchNorm1d(hidden_size))
+            layers.append(nn.Dropout1d(0.3))
             layers.append(self.d_activation)
             input_size = hidden_size
         layers.append(nn.Linear(input_size, 1))
