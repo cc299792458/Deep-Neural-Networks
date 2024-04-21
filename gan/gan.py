@@ -23,6 +23,89 @@ from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_rando
 
 plt.rcParams['animation.embed_limit'] = 100
 
+class Generator(nn.Module):
+    def __init__(self, config, feature_size=None):
+        super(Generator, self).__init__()
+        self.config = config
+        self.feature_size = feature_size
+        
+        self.model = self.create_generator()
+        self.apply(self.weights_init)
+
+    def create_generator(self):
+        layers = []
+        self.channels = self.config['channels']
+        self.image_size = self.config['image_size']
+        self.latent_dim = self.config['latent_dim']
+        hidden_sizes = self.config['g_hidden_sizes']
+        activation = self.config['g_activation']
+
+        input_size = self.latent_dim
+        for hidden_size in hidden_sizes:
+            layers.append(nn.Linear(input_size, hidden_size))
+            # layers.append(nn.BatchNorm1d(hidden_size))
+            layers.append(activation)
+            input_size = hidden_size
+        layers.append(nn.Linear(input_size, self.feature_size))
+        # TODO: figure out why the network collapse when it uses this BatchNorm1d
+        # layers.append(nn.BatchNorm1d(self.feature_size))
+        layers.append(nn.Tanh())
+
+        return nn.Sequential(*layers)
+
+    def forward(self, z):
+
+        return self.model(z).view(-1, self.channels, self.image_size, self.image_size)
+    
+    def weights_init(self, m):
+        classname = m.__class__.__name__
+        if 'Linear' in classname:
+            nn.init.normal_(m.weight.data, 0.0, 0.02)
+            nn.init.constant_(m.bias.data, 0)
+        elif 'BatchNorm' in classname:
+            nn.init.normal_(m.weight.data, 1.0, 0.02)
+            nn.init.constant_(m.bias.data, 0)
+        
+class Discriminator(nn.Module):
+    def __init__(self, config, feature_size):
+        super(Discriminator, self).__init__()
+        self.config = config
+        self.feature_size = feature_size
+        self.model = self.create_discriminator()
+        self.apply(self.weights_init)
+
+    def forward(self, img):
+        img = img.view(-1, self.feature_size)
+        
+        return self.model(img)
+
+    def create_discriminator(self):
+        layers = []
+        hidden_sizes = self.config['d_hidden_sizes']
+        activation = self.config['d_activation']
+                
+        input_size = self.feature_size
+        for hidden_size in hidden_sizes:
+            layers.append(nn.Linear(input_size, hidden_size))
+            # TODO: figure out why the network works with Dropout1d but not BatchNorm1d
+            # layers.append(nn.BatchNorm1d(hidden_size))
+            layers.append(nn.Dropout1d(0.3))
+            layers.append(activation)
+            input_size = hidden_size
+        layers.append(nn.Linear(input_size, 1))
+        # layers.append(nn.BatchNorm1d(1))
+        layers.append(nn.Sigmoid())
+
+        return nn.Sequential(*layers)
+    
+    def weights_init(self, m):
+        classname = m.__class__.__name__
+        if 'Linear' in classname:
+            nn.init.normal_(m.weight.data, 0.0, 0.02)
+            nn.init.constant_(m.bias.data, 0)
+        elif 'BatchNorm' in classname:
+            nn.init.normal_(m.weight.data, 1.0, 0.02)
+            nn.init.constant_(m.bias.data, 0)
 
 class GAN(nn.Module):
     def __init__(self,
@@ -40,8 +123,10 @@ class GAN(nn.Module):
             'channels': 1,
             'image_size': 28,   # Default for MNIST
             'latent_dim': 128,
+            'generator_cls': Generator,
             'g_hidden_sizes': [256, 512, 1024],
             'g_activation': nn.LeakyReLU(0.2),
+            'discriminator_cls': Discriminator, 
             'd_hidden_sizes': [1024, 512, 256],
             'd_activation': nn.LeakyReLU(0.2),
         }
@@ -52,63 +137,18 @@ class GAN(nn.Module):
         self.channels = self.config.get('channels')
         self.image_size = self.config.get('image_size')
         self.latent_dim = self.config.get('latent_dim')
-        self.g_activation = self.config.get('g_activation')
-        self.d_activation = self.config.get('d_activation')
+        generator_cls = self.config.get('generator_cls')
+        discriminator_cls = self.config.get('discriminator_cls')
 
-        self.generator = self.create_generator()
-        self.discriminator = self.create_discriminator()
-        self.generator.apply(self.weights_init)
-        self.discriminator.apply(self.weights_init)
+        # Create generator and discriminator
+        self.generator = generator_cls(self.config, self.feature_size).to(device)
+        self.discriminator = discriminator_cls(self.config, self.feature_size).to(device)
 
         self.g_optimizer = optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
         self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
+        
         self.criterion = nn.BCELoss()
         self.epochs = epochs    
-    
-    def create_generator(self):
-        layers = []
-        hidden_sizes = self.config['g_hidden_sizes']
-
-        input_size = self.latent_dim
-        for hidden_size in hidden_sizes:
-            layers.append(nn.Linear(input_size, hidden_size))
-            # layers.append(nn.BatchNorm1d(hidden_size))
-            layers.append(self.g_activation)
-            input_size = hidden_size
-        layers.append(nn.Linear(input_size, self.feature_size))
-        # TODO: figure out why the network cllapse when it uses this BatchNorm1d
-        # layers.append(nn.BatchNorm1d(self.feature_size))
-        layers.append(nn.Tanh())
-        layers.append(nn.Unflatten(1, (self.channels, self.image_size, self.image_size)))
-        
-        return nn.Sequential(*layers)
-
-    def create_discriminator(self):
-        layers = []
-        hidden_sizes = self.config['d_hidden_sizes']
-        layers.append(nn.Flatten())
-
-        input_size = self.feature_size
-        for hidden_size in hidden_sizes:
-            layers.append(nn.Linear(input_size, hidden_size))
-            # TODO: figure out why the network works with Dropout1d but not BatchNorm1d
-            # layers.append(nn.BatchNorm1d(hidden_size))
-            layers.append(nn.Dropout1d(0.3))
-            layers.append(self.d_activation)
-            input_size = hidden_size
-        layers.append(nn.Linear(input_size, 1))
-        # layers.append(nn.BatchNorm1d(1))
-        layers.append(nn.Sigmoid())
-
-        return nn.Sequential(*layers)
-    
-    def weights_init(self, m):
-        classname = m.__class__.__name__
-        if classname.find('Conv') != -1:
-            nn.init.normal_(m.weight.data, 0.0, 0.02)
-        elif classname.find('BatchNorm') != -1:
-            nn.init.normal_(m.weight.data, 1.0, 0.02)
-            nn.init.constant_(m.bias.data, 0)
     
     def learn(self, dataloader: DataLoader, log_dir=None):
         # Create batch of latent vectors that we will use to visualize

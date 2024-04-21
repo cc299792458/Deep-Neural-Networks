@@ -17,20 +17,35 @@ from torchvision.transforms import Compose, ToTensor, Normalize
 
 from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
 
-from gan.deep_convolutional_gan import DCGAN
+from gan.deep_convolutional_gan import DCGAN, Discriminator
+
+class Discriminator(Discriminator):
+    def __init__(self, config, feature_size):
+        super().__init__(config, feature_size)
+        # Remove the final Sigmoid layer.
+        self.model = nn.Sequential(*list(self.model.children())[:-1])
 
 class WGAN(DCGAN):
     def __init__(self, 
                 feature_size: int, 
                 config: dict = None, 
                 device: str = 'cpu', 
-                lr: float = 0.00005, 
+                lr: float = 0.0002, 
                 betas: tuple[float, float] = (0.5, 0.999), 
                 epochs: int = 50) -> None:
         
         default_config = {
             'weight_clipping_limit': 0.01,
             'n_critic': 5,
+            'g_hidden_channels': [1024, 512, 256, 128],
+            'g_kernel_sizes': [4, 4, 4, 4, 1],
+            'g_strides': [1, 2, 2, 2, 1],
+            'g_paddings': [0, 1, 1, 1, 2],
+            'discriminator_cls': Discriminator,
+            'd_hidden_channels': [256, 512, 1024],
+            'd_kernel_sizes': [4, 4, 4, 4],
+            'd_strides': [2, 2, 2, 1],
+            'd_paddings': [1, 1, 2, 0],
         }
         
         if config is not None:
@@ -40,9 +55,6 @@ class WGAN(DCGAN):
 
         self.weight_clipping_limit = self.config.get('weight_clipping_limit')
         self.n_critic = self.config.get('n_critic')
-
-        # Remove the final layer: a Sigmoid layer.
-        self.discriminator = nn.Sequential(*list(self.discriminator.children())[:-1])
 
         # Loss will be calculated by a formula directly.
         self.criterion = None
