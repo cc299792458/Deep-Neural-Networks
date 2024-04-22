@@ -353,7 +353,7 @@ if __name__ == '__main__':
     latent_dim = 128
     epochs = 200
 
-    dcgan = GAN(feature_size=feature_size, device=device,
+    gan = GAN(feature_size=feature_size, device=device,
             config={'latent_dim': latent_dim, 
                     'channels': channels, 
                     'image_size': image_size,}, epochs=epochs).to(device)
@@ -361,16 +361,16 @@ if __name__ == '__main__':
     train = True
     ##### 1. Train the model #####
     if train:
-        dcgan.learn(dataloader=dataloader, log_dir=log_dir)
+        gan.learn(dataloader=dataloader, log_dir=log_dir)
 
     ##### 2. Generate image from random noise #####
     else:
         ## Load Model ##
-        dcgan.load_state_dict(torch.load(os.path.join(log_dir, f'/models/final_model.pth')))
+        gan.load_state_dict(torch.load(os.path.join(log_dir, f'/models/final_model.pth')))
 
         num_images = 400
         z_ranges = ((-1, 1), (-1, 1))
-        generate_random_images_and_save(dcgan, 
+        generate_random_images_and_save(gan, 
                                         num_images=num_images, 
                                         log_dir=log_dir, 
                                         image_size=image_size, 

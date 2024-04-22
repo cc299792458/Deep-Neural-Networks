@@ -82,6 +82,47 @@ def generate_uniformly_distributed_images_and_save(model, num_images, z_ranges, 
     collage.save(collage_file_path)
     print(f"Uniformly distributed sample saved to {collage_file_path}")
 
+def generate_conditional_images_and_save(model, num_per_cls, num_classes, log_dir, image_size=28, latent_dim=100):
+    model.eval()  # Set the model to evaluation mode
+    
+    # Ensure the logging directory exists
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # Prepare a collage to hold all generated images
+    cols = num_classes
+    rows = num_per_cls
+    collage_width = cols * image_size
+    collage_height = rows * image_size
+    collage = Image.new('RGB', (collage_width, collage_height))
+    
+    # Generate images class by class
+    for cls_index in range(num_classes):
+        # Sample latent vectors
+        z = torch.randn(num_per_cls, latent_dim, 1, 1).to(model.device)
+        # Create class labels for conditional generation
+        labels = torch.full((num_per_cls,), cls_index, dtype=torch.long).to(model.device)
+        
+        # Generate images with no gradient tracking
+        with torch.no_grad():
+            generated_images = model.sample(z, labels).cpu()
+        
+        # Place each image in the collage
+        for i, img_tensor in enumerate(generated_images):
+            img = to_pil_image(img_tensor.view(-1, image_size, image_size))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            x_pos = cls_index * image_size
+            y_pos = i * image_size
+            collage.paste(img, (x_pos, y_pos))
+    
+    # Save the collage to a file
+    collage_file_path = os.path.join(log_dir, "conditional_sample.png")
+    collage.save(collage_file_path)
+    print(f"Conditional sample saved to {collage_file_path}")
+
+    return collage
+
 def show_forward_process(image, diffusion_model, timesteps=200, num_images=10):
     stepsize = int(timesteps / num_images)
     plt.figure(figsize=(12, 12))

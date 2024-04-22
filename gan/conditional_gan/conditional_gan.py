@@ -15,9 +15,77 @@ from torchvision.datasets import MNIST, CIFAR10
 from torchvision.utils import make_grid, save_image
 from torchvision.transforms import Compose, ToTensor, Normalize
 
-from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
+from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_conditional_images_and_save
 
-from gan.deep_convolutional_gan import DCGAN
+from gan.deep_convolutional_gan import DCGAN, Generator, Discriminator
+
+class Generator(Generator):
+    def __init__(self, config, feature_size=None):
+        super().__init__(config, feature_size)
+
+        self.latent_dim = self.config['latent_dim']
+        self.num_classes = self.config['num_classes']
+        self.label_emb_dim = self.config['label_emb_dim'] if self.config.get('label_emb_dim') is not None else self.num_classes
+        
+        self.modify_first_layer()
+        self.label_emb = nn.Embedding(self.num_classes, self.label_emb_dim)
+    
+    def forward(self, z, label):
+        # Embed label
+        label = self.label_emb(label)
+        label = label.view(label.size(0), label.size(1), 1, 1)
+        # Concatenate z and label
+        input = torch.cat([z, label], 1)
+        
+        return self.model(input)
+
+    def modify_first_layer(self):
+        """
+            Modify the first layer to accommodate label_embedding.
+        """
+        first_layer = list(self.model.children())[0]
+        modified_first_layer = nn.ConvTranspose2d(self.latent_dim + self.label_emb_dim, first_layer.out_channels,
+                                                  kernel_size=first_layer.kernel_size, 
+                                                  stride=first_layer.stride,
+                                                  padding=first_layer.padding)
+        new_layers = [modified_first_layer] + list(self.model.children())[1:]
+
+        self.model = nn.Sequential(*new_layers)
+    
+
+class Discriminator(Discriminator):
+    def __init__(self, config, feature_size):
+        super().__init__(config, feature_size)
+
+        self.image_size = self.config['image_size']
+        self.latent_dim = self.config['latent_dim']
+        self.num_classes = self.config['num_classes']
+        self.label_emb_dim = self.config['label_emb_dim'] if self.config.get('label_emb_dim') is not None else self.num_classes
+        
+        self.modify_first_layer()
+        self.label_emb = nn.Embedding(self.num_classes, self.label_emb_dim)
+
+    def forward(self, img, label):
+        # Expand label to match image size and concatenate
+        label = self.label_emb(label)
+        label = label.view(label.size(0), label.size(1), 1, 1)
+        label = label.expand(-1, -1, self.image_size, self.image_size)
+        img = torch.cat([img, label], 1)
+
+        return self.model(img)
+
+    def modify_first_layer(self):
+        """
+            Modify the first layer to accommodate label_embedding.
+        """
+        first_layer = list(self.model.children())[0]
+        modified_first_layer = nn.Conv2d(first_layer.in_channels + self.label_emb_dim, first_layer.out_channels,
+                                         kernel_size=first_layer.kernel_size, 
+                                         stride=first_layer.stride,
+                                         padding=first_layer.padding)
+        new_layers = [modified_first_layer] + list(self.model.children())[1:]
+
+        self.model = nn.Sequential(*new_layers)
 
 class CGAN(DCGAN):
     """
@@ -33,6 +101,8 @@ class CGAN(DCGAN):
         default_config = {
             'num_classes': 10,
             # 'label_emb_dim': 10,
+            'generator_cls': Generator,
+            'discriminator_cls': Discriminator,
         }
         
         if config is not None:
@@ -41,42 +111,25 @@ class CGAN(DCGAN):
         super().__init__(feature_size, default_config, device, lr, betas, epochs)
 
         self.num_classes = self.config.get('num_classes')
-        self.label_emb_dim = self.config.get('label_emb_dim') if self.config.get('label_emb_dim') is not None else self.num_classes
-        self.label_emb = nn.Embedding(self.num_classes, self.label_emb_dim)
+        # self.label_emb_dim = self.config.get('label_emb_dim') if self.config.get('label_emb_dim') is not None else self.num_classes
+        # self.label_emb = nn.Embedding(self.num_classes, self.label_emb_dim)
 
-        self.modify_generator()
-        self.modify_discriminator()
-        self.generator.apply(self.weights_init)
-        self.discriminator.apply(self.weights_init)
+        # self.modify_generator()
+        # self.modify_discriminator()
+        # self.generator.apply(self.weights_init)
+        # self.discriminator.apply(self.weights_init)
 
         self.g_optimizer = optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
         self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
 
-    def modify_generator(self):
-        first_layer = list(self.generator.children())[0]
-        modified_first_layer = nn.ConvTranspose2d(self.latent_dim + self.label_emb_dim, first_layer.out_channels,
-                                                  kernel_size=first_layer.kernel_size, 
-                                                  stride=first_layer.stride,
-                                                  padding=first_layer.padding)
-        new_layers = [modified_first_layer] + list(self.generator.children())[1:]
-        self.generator = nn.Sequential(*new_layers)
-
-    def modify_discriminator(self):
-        first_layer = list(self.discriminator.children())[0]
-        modified_first_layer = nn.Conv2d(first_layer.in_channels + self.label_emb_dim, first_layer.out_channels,
-                                         kernel_size=first_layer.kernel_size, 
-                                         stride=first_layer.stride,
-                                         padding=first_layer.padding)
-        new_layers = [modified_first_layer] + list(self.discriminator.children())[1:]
-        self.discriminator = nn.Sequential(*new_layers)
-
     def learn(self, dataloader: DataLoader, log_dir=None):
         # Create batch of latent vectors that we will use to visualize
         # the progression of the generator
-        fixed_noise = self.sample_z(batch_size=64)
+        fixed_z, fixed_label = self.sample_z_and_label(num_per_cls=8, deterministic=True)
 
         # Establish convention for real and fake labels during training
         real_label = 1.
+        wrong_label = 0.
         fake_label = 0.
 
         # Lists to keep track of progress
@@ -86,13 +139,16 @@ class CGAN(DCGAN):
 
         print("Starting Training Loop...")
         for epoch in range(self.epochs):
-            for step, (real_image, _) in enumerate(dataloader):
+            for step, (real_image, correct_label) in enumerate(dataloader):
                 real_image = real_image.to(self.device)
+                correct_label = correct_label.to(self.device)
                 batch_size = real_image.shape[0]
                 # Update Discriminator
-                d_loss, gen_image, real_score, fake_score_before_update = self.discriminator_step(
+                d_loss, gen_image, gen_label, real_score, incorrect_score, fake_score_before_update = self.discriminator_step(
                     real_image=real_image, 
+                    correct_label=correct_label,
                     real_label=real_label, 
+                    wrong_label=wrong_label,
                     fake_label=fake_label,
                     batch_size=batch_size
                 )
@@ -100,6 +156,7 @@ class CGAN(DCGAN):
                 # Update Generator
                 g_loss, fake_score_after_update = self.generator_step(
                     gen_image=gen_image, 
+                    gen_label=gen_label,
                     real_label=real_label,
                     batch_size=batch_size
                 )
@@ -107,17 +164,18 @@ class CGAN(DCGAN):
                 # Output training stats
                 if step % 50 == 0:
                     print(
-                        f'[{epoch}/{self.epochs}][{step}/{len(dataloader)}]\t'
-                        f'Loss_D: {d_loss.item():.4f}\tLoss_G: {g_loss.item():.4f}\t'
-                        f'D(x): {real_score:.4f}\tD(G(z)): {fake_score_before_update:.4f} / {fake_score_after_update:.4f}'
+                        f'[{epoch}/{self.epochs}][{step}/{len(dataloader)}] '
+                        f'Loss_D: {d_loss:.4f}, Loss_G: {g_loss:.4f}, '
+                        f'D(x): {real_score:.4f}, D(x_wrong): {incorrect_score:.4f}, '
+                        f'D(G(z)): {fake_score_before_update:.4f} / {fake_score_after_update:.4f}'
                     )
                 # Save Losses for plotting later
                 g_losses.append(g_loss.item())
                 d_losses.append(d_loss.item())
             
             with torch.no_grad():
-                gen_image = self.generator(fixed_noise).detach().cpu()
-                img = make_grid(gen_image, padding=2, normalize=True)
+                gen_image = self.generator(fixed_z, fixed_label).detach().cpu()
+                img = make_grid(gen_image, nrow=10, padding=2, normalize=True)
                 
                 samples_dir = os.path.join(log_dir, 'samples')
                 os.makedirs(samples_dir, exist_ok=True)
@@ -140,51 +198,77 @@ class CGAN(DCGAN):
         self.plot_loss_curves(g_losses=g_losses, d_losses=d_losses, log_dir=log_dir)
         self.visualize_progression(img_list=img_list, dataloader=dataloader, log_dir=log_dir)
         
-
-    def discriminator_step(self, real_image, real_label, fake_label, batch_size):
+    def discriminator_step(self, real_image, correct_label, real_label, wrong_label, fake_label, batch_size):
         """
             Update Discriminator: maximize log(D(x)) + log(1 - D(G(z)))
         """
-        ## Train with all-real batch
+        ## Train with real image, correct label
         self.discriminator.zero_grad()
         real_label = torch.full((batch_size, ), real_label, dtype=torch.float, device=self.device)
-        output = self.discriminator(real_image).view(-1)
+        output = self.discriminator(real_image, correct_label).view(-1)
         real_loss = self.criterion(output, real_label)
         real_loss.backward()
         real_score = output.mean().item()
 
-        ## Train with all-fake batch
-        z = self.sample_z(batch_size=batch_size)
-        gen_image = self.generator(z)
+        ## Train with real image, incorrect label
+        wrong_label = torch.full((batch_size, ), wrong_label, dtype=torch.float, device=self.device)
+        incorrect_label = self.get_incorrect_label(correct_label=correct_label)
+        output = self.discriminator(real_image, incorrect_label).view(-1)
+        incorrect_loss = self.criterion(output, wrong_label)
+        incorrect_loss.backward()
+        incorrect_score = output.mean().item()
+
+        ## Train with fake image
+        z, gen_label = self.sample_z_and_label(batch_size=batch_size, deterministic=False)
+        gen_image = self.generator(z, gen_label)
         fake_label = torch.full((batch_size, ), fake_label, dtype=torch.float, device=self.device)
-        output = self.discriminator(gen_image.detach()).view(-1)
+        output = self.discriminator(gen_image.detach(), gen_label.detach()).view(-1)
         fake_loss = self.criterion(output, fake_label)
         fake_loss.backward()
         fake_score_before_update = output.mean().item()
-        d_loss = real_loss + fake_loss
+        d_loss = real_loss + incorrect_loss + fake_loss
         self.d_optimizer.step()
 
-        return d_loss, gen_image, real_score, fake_score_before_update
+        return d_loss, gen_image, gen_label, real_score, incorrect_score, fake_score_before_update
     
-    def generator_step(self, gen_image, real_label, batch_size):
+    def generator_step(self, gen_image, gen_label, real_label, batch_size):
         """
             Update Generator: maximize log(D(G(z)))
         """
         self.generator.zero_grad()
         real_label = torch.full((batch_size, ), real_label, dtype=torch.float, device=self.device)  # fake labels are real for generator cost
-        output = self.discriminator(gen_image).view(-1)
+        output = self.discriminator(gen_image, gen_label).view(-1)
         g_loss = self.criterion(output, real_label)
         g_loss.backward()
         fake_score_after_update = output.mean().item()
         self.g_optimizer.step()
         
         return g_loss, fake_score_after_update
+    
+    def get_incorrect_label(self, correct_label):
+        random_addition = torch.randint(low=1, high=self.num_classes, size=(correct_label.size(0),), device=correct_label.device)
+        incorrect_label = (correct_label + random_addition) % self.num_classes
 
-    def sample_z(self, batch_size, labels):
-        z = torch.randn(batch_size, self.latent_dim, 1, 1, device=self.device)
-        labels = self.label_emb(labels).view(batch_size, self.num_classes, 1, 1)
-        combined_input = torch.cat([z, labels], 1)
-        return combined_input
+        return incorrect_label
+
+    def sample_z_and_label(self, batch_size=None, num_per_cls=None, deterministic=True):
+        if not deterministic:
+            z = torch.randn(batch_size, self.latent_dim, 1, 1, device=self.device)
+            label = torch.randint(low=0, high=self.num_classes, size=(batch_size,), device=self.device)
+        else:
+            batch_size = num_per_cls * self.num_classes
+            z = torch.randn(batch_size, self.latent_dim, 1, 1, device=self.device)
+            label = torch.arange(self.num_classes, device=self.device).repeat(num_per_cls)
+
+        return z, label
+    
+    def sample(self, z=None, label=None, batch_size=None, num_per_cls=None, deterministic=True):
+        if z is None or label is None:
+            z, label = self.sample_z_and_label(batch_size=batch_size, num_per_cls=num_per_cls, deterministic=deterministic)
+        output = self.generator(z, label)
+
+        return output
+    
     
 if __name__ == '__main__':
     set_seed()
@@ -195,6 +279,7 @@ if __name__ == '__main__':
     if dataset_name == 'MNIST':
         channels = 1
         image_size = 28
+        num_classes = 10
         transform = Compose([ToTensor(), Normalize(mean=(0.5,), std=(0.5,))])
         dataset = MNIST(root='./data', transform=transform, download=True)
     elif dataset_name == 'CIFAR-10':
@@ -214,15 +299,16 @@ if __name__ == '__main__':
     ## Training parameters ## 
     latent_dim = 128
     lr = 2e-4
-    epochs = 200
+    epochs = 50
 
     cgan = CGAN(feature_size=feature_size, device=device,
             config={'latent_dim': latent_dim, 
                     'channels': channels, 
-                    'image_size': image_size,}, 
+                    'image_size': image_size,
+                    'num_classes': num_classes,}, 
                     lr=lr, epochs=epochs).to(device)
 
-    train = True
+    train = False
     ##### 1. Train the model #####
     if train:
         cgan.learn(dataloader=dataloader, log_dir=log_dir)
@@ -233,10 +319,10 @@ if __name__ == '__main__':
         model_path = os.path.join(log_dir, 'models/final_model.pth')
         cgan.load_state_dict(torch.load(model_path))
 
-        num_images = 400
-        z_ranges = ((-1, 1), (-1, 1))
-        generate_random_images_and_save(cgan, 
-                                        num_images=num_images, 
-                                        log_dir=log_dir, 
-                                        image_size=image_size, 
-                                        latent_dim=latent_dim)
+        num_per_cls = 20
+        generate_conditional_images_and_save(model=cgan,
+                                             num_per_cls=num_per_cls,
+                                             num_classes=num_classes,
+                                             log_dir=log_dir,
+                                             image_size=image_size,
+                                             latent_dim=latent_dim)
