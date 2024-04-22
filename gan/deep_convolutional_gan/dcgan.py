@@ -66,6 +66,16 @@ class Generator(Generator):
         layers.append(nn.Tanh())
 
         return nn.Sequential(*layers)
+    
+    def weights_init(self, m):
+        classname = m.__class__.__name__
+        if classname.find("Conv") != -1:
+            torch.nn.init.normal_(m.weight.data, 0.0, 0.02)
+            if hasattr(m, "bias") and m.bias is not None:
+                torch.nn.init.constant_(m.bias.data, 0.0)
+        elif classname.find("BatchNorm2d") != -1:
+            torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
+            torch.nn.init.constant_(m.bias.data, 0.0)
 
 class Discriminator(Discriminator):
     def __init__(self, config, feature_size):
@@ -105,6 +115,16 @@ class Discriminator(Discriminator):
         layers.append(nn.Sigmoid())
 
         return nn.Sequential(*layers)
+    
+    def weights_init(self, m):
+        classname = m.__class__.__name__
+        if classname.find("Conv") != -1:
+            torch.nn.init.normal_(m.weight.data, 0.0, 0.02)
+            if hasattr(m, "bias") and m.bias is not None:
+                torch.nn.init.constant_(m.bias.data, 0.0)
+        elif classname.find("BatchNorm2d") != -1:
+            torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
+            torch.nn.init.constant_(m.bias.data, 0.0)
 
 class DCGAN(GAN):
     def __init__(self, 
