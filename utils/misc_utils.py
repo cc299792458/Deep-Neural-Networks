@@ -7,7 +7,6 @@ from PIL import Image
 
 import torch
 from torchvision.transforms.functional import to_pil_image
-from torchvision.utils import make_grid
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -134,12 +133,4 @@ def show_forward_process(image, diffusion_model, timesteps=200, num_images=10):
         plt.imshow(image_pil)
         plt.axis('off')
     plt.tight_layout()
-    plt.show()
-
-def plot_data_from_dataloader(dataloader, device):
-    real_batch = next(iter(dataloader))
-    plt.figure(figsize=(8,8))
-    plt.axis("off")
-    plt.title("Training Images")
-    plt.imshow(np.transpose(make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
     plt.show()

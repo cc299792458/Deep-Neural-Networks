@@ -19,7 +19,8 @@ from torchvision.datasets import MNIST, CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 from IPython.display import HTML
-from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
+from utils.data_utils import plot_data_from_dataloader
+from utils.misc_utils import set_seed, generate_random_images_and_save
 
 plt.rcParams['animation.embed_limit'] = 100
 
@@ -137,19 +138,27 @@ class GAN(nn.Module):
         self.channels = self.config.get('channels')
         self.image_size = self.config.get('image_size')
         self.latent_dim = self.config.get('latent_dim')
-        generator_cls = self.config.get('generator_cls')
-        discriminator_cls = self.config.get('discriminator_cls')
+        # generator_cls = self.config.get('generator_cls')
+        # discriminator_cls = self.config.get('discriminator_cls')
 
-        # Create generator and discriminator
-        self.generator = generator_cls(self.config, self.feature_size).to(device)
-        self.discriminator = discriminator_cls(self.config, self.feature_size).to(device)
+        self.create_networks()
+        self.create_optimizer(lr, betas)
 
-        self.g_optimizer = optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
-        self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
-        
         self.criterion = nn.BCELoss()
         self.epochs = epochs    
     
+    def create_networks(self):
+        """
+            Create generator and discriminator
+        """
+        self.generator = Generator(self.config, self.feature_size).to(self.device)
+        self.discriminator = Discriminator(self.config, self.feature_size).to(self.device)
+    
+    def create_optimizer(self, lr, betas):
+        self.g_optimizer = optim.Adam(self.generator.parameters(), lr=lr, betas=betas)
+        self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=lr, betas=betas)
+        
+
     def learn(self, dataloader: DataLoader, log_dir=None):
         # Create batch of latent vectors that we will use to visualize
         # the progression of the generator

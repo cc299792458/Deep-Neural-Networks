@@ -15,7 +15,8 @@ from torchvision.datasets import MNIST, CIFAR10
 from torchvision.utils import make_grid, save_image
 from torchvision.transforms import Compose, ToTensor, Normalize
 
-from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
+from utils.data_utils import plot_data_from_dataloader
+from utils.misc_utils import set_seed, generate_random_images_and_save
 
 from gan.deep_convolutional_gan import DCGAN, Discriminator
 
@@ -59,6 +60,7 @@ class WGAN(DCGAN):
         # Loss will be calculated by a formula directly.
         self.criterion = None
 
+    def create_optimizer(self, lr):
         self.g_optimizer = optim.RMSprop(params=self.generator.parameters(), lr=lr)
         self.d_optimizer = optim.RMSprop(params=self.discriminator.parameters(), lr=lr)
 

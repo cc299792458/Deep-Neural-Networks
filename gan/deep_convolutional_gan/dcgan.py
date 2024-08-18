@@ -16,7 +16,8 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize
 
-from utils.misc_utils import set_seed, plot_data_from_dataloader, generate_random_images_and_save
+from utils.data_utils import plot_data_from_dataloader
+from utils.misc_utils import set_seed, generate_random_images_and_save
 
 from gan import GAN, Generator, Discriminator
 
@@ -140,14 +141,14 @@ class DCGAN(GAN):
             'image_size': 28,   # Default for MNIST
             'latent_dim': 128,
             ## For Convolutional Network ##
-            'generator_cls': Generator,
+            # 'generator_cls': Generator,
             'g_hidden_channels': [512, 256, 128, 64],
             'g_kernel_sizes': [4, 4, 4, 4, 1],
             'g_strides': [1, 2, 2, 2, 1],
             'g_paddings': [0, 1, 1, 1, 2],
             'g_batchnorm': True,
             'g_activation': nn.ReLU(),
-            'discriminator_cls': Discriminator, 
+            # 'discriminator_cls': Discriminator, 
             'd_hidden_channels': [64, 128, 256],
             'd_kernel_sizes': [4, 4, 4, 4],
             'd_strides': [2, 2, 2, 1],
@@ -160,6 +161,13 @@ class DCGAN(GAN):
             default_config.update(config)
 
         super().__init__(feature_size, default_config, device, lr, betas, epochs)
+
+    def create_networks(self):
+        """
+            Create generator and discriminator
+        """
+        self.generator = Generator(self.config, self.feature_size).to(self.device)
+        self.discriminator = Discriminator(self.config, self.feature_size).to(self.device)
     
     def sample_z(self, batch_size):
         z = torch.randn(batch_size, self.latent_dim, 1, 1, device=self.device)
@@ -182,7 +190,7 @@ if __name__ == '__main__':
 
     if dataset_name == 'MNIST':
         channels = 1
-        image_size = 28
+        image_size = 8
         transform = Compose([ToTensor(), Normalize(mean=(0.5,), std=(0.5,))])
         dataset = MNIST(root='./data', transform=transform, download=True)
     elif dataset_name == 'CIFAR-10':

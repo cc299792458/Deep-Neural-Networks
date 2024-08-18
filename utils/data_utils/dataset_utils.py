@@ -1,9 +1,15 @@
 import os
 import math
+import glob
+import random
+import numpy as np
 import matplotlib.pyplot as plt
+
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torchvision.utils import make_grid
+
 
 class StanfordCars(Dataset):
     """
@@ -69,6 +75,68 @@ def show_images(dataset, num_samples=8, cols=4):
         plt.axis('off')
     plt.tight_layout()
     plt.show()
+
+def plot_data_from_dataloader(dataloader, device, type=None):
+    if type == None:
+        batch = next(iter(dataloader))
+        plt.figure(figsize=(8,8))
+        plt.axis("off")
+        plt.title("Training Images")
+        plt.imshow(np.transpose(make_grid(batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
+        plt.show()
+    elif type == 'style_transfer':
+        batch = next(iter(dataloader))
+    
+        images_A = batch['A'].to(device)
+        images_B = batch['B'].to(device)
+
+        plt.figure(figsize=(16, 8))
+        plt.axis("off")
+        plt.title("Training Images - Style A | Style B")
+        
+        plt.subplot(1, 2, 1)
+        plt.imshow(np.transpose(make_grid(images_A, padding=2, normalize=True).cpu(), (1, 2, 0)))
+        plt.title("Style A")
+        
+        plt.subplot(1, 2, 2)
+        plt.imshow(np.transpose(make_grid(images_B, padding=2, normalize=True).cpu(), (1, 2, 0)))
+        plt.title("Style B")
+        
+        plt.show()
+
+def to_rgb(image):
+    rgb_image = Image.new("RGB", image.size)
+    rgb_image.paste(image)
+    return rgb_image
+
+class StyleTransferDataset(Dataset):
+    def __init__(self, root, transform=None, unaligned=False, mode="train"):
+        self.transform = transform
+        self.unaligned = unaligned
+
+        self.files_A = sorted(glob.glob(os.path.join(root, "%sA" % mode) + "/*.*"))
+        self.files_B = sorted(glob.glob(os.path.join(root, "%sB" % mode) + "/*.*"))
+
+    def __getitem__(self, index):
+        image_A = Image.open(self.files_A[index % len(self.files_A)])
+
+        if self.unaligned:
+            image_B = Image.open(self.files_B[random.randint(0, len(self.files_B) - 1)])
+        else:
+            image_B = Image.open(self.files_B[index % len(self.files_B)])
+
+        # Convert grayscale images to rgb
+        if image_A.mode != "RGB":
+            image_A = to_rgb(image_A)
+        if image_B.mode != "RGB":
+            image_B = to_rgb(image_B)
+
+        item_A = self.transform(image_A)
+        item_B = self.transform(image_B)
+        return {"A": item_A, "B": item_B}
+
+    def __len__(self):
+        return max(len(self.files_A), len(self.files_B))
 
 if __name__ == '__main__':
     dataset = StanfordCars()
