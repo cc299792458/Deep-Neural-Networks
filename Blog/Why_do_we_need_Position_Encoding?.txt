@@ -1,0 +1,3 @@
+Obviously, adding postion informaition into the sequence will enhance the performance of the model.
+
+But the question is, why do we use the form of postion encoding rather than other form?

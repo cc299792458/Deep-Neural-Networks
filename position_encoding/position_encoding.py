@@ -2,27 +2,29 @@ import math
 
 import torch
 import torch.nn as nn
+import math
 
-#NOTE: Not sure this form is absolutly the same to the pos encoding in "Attention is All You Need"
-class SinusoidalPositionEmbeddings(nn.Module):
-    def __init__(self, dim):
-        super(SinusoidalPositionEmbeddings, self).__init__()
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
         
-        self.dim = dim
+        # Create a matrix of shape (max_len, d_model) where each row corresponds to a positional encoding
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        
+        # Calculate the angles for the positional encodings
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)  # Apply sin to even indices in the array
+        pe[:, 1::2] = torch.cos(position * div_term)  # Apply cos to odd indices in the array
+        
+        # Add an extra dimension for batch size and register it as a buffer to prevent it from being treated as a parameter
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
 
-    def forward(self, time):
-        # Calculate the scale
-        device = time.device
-        half_dim = self.dim // 2
-        scale = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=device) * (-math.log(10000.0) / half_dim))
-        
-        # Calculate the time encodings
-        time = time.unsqueeze(1)
-        time_encodings = torch.zeros(time.size(0), self.dim, device=device)
-        time_encodings[:, 0::2] = torch.sin(time * scale)
-        time_encodings[:, 1::2] = torch.cos(time * scale)
-        
-        return time_encodings
+    def forward(self, x):
+        # Add the positional encoding to the input embeddings
+        x = x + self.pe[:, :x.size(1), :]
+        return x
     
 if __name__ == '__main__':
-    position_embeddings = SinusoidalPositionEmbeddings()
+    pass
