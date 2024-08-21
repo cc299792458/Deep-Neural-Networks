@@ -1,3 +1,7 @@
+"""
+    ModelNet40 dataset class
+"""
+
 import os
 import numpy as np
 import open3d as o3d
@@ -8,12 +12,11 @@ from torch.utils.data import Dataset
 class ModelNet40(Dataset):
     def __init__(self, root_dir="./data/ModelNet40", split='train', categories=None, transform=None, show_progress=True):
         """
-        ModelNet40 dataset class.
-        :param root_dir: Path to the extracted ModelNet40 folder (default is "./data/ModelNet40").
-        :param split: Dataset split, 'train' or 'test'.
-        :param categories: List of categories to load, if None, load all categories.
-        :param transform: Optional point cloud transformation function.
-        :param show_progress: Whether to show a progress bar during data loading.
+            root_dir: Path to the extracted ModelNet40 folder (default is "./data/ModelNet40").
+            split: Dataset split, 'train' or 'test'.
+            categories: List of categories to load, if None, load all categories.
+            transform: Optional point cloud transformation function.
+            show_progress: Whether to show a progress bar during data loading.
         """
         self.root_dir = root_dir
         self.split = split
@@ -87,9 +90,52 @@ class ModelNet40(Dataset):
         pcd.points = o3d.utility.Vector3dVector(point_cloud)
         o3d.visualization.draw_geometries([pcd])
 
+class PointNetModelNet40(ModelNet40):
+    def __init__(self, root_dir="./data/ModelNet40", split='train', categories=None, 
+                 transform=None, show_progress=True, npoints=1024, data_augmentation=True):
+        super(PointNetModelNet40, self).__init__(root_dir, split, categories, transform, show_progress)
+        self.npoints = npoints
+        self.data_augmentation = data_augmentation
+
+    def __getitem__(self, idx):
+        point_cloud, label = super(PointNetModelNet40, self).__getitem__(idx)
+        
+        # Randomly sample npoints with replacement if necessary
+        if point_cloud.shape[0] < self.npoints:
+            choice = np.random.choice(point_cloud.shape[0], self.npoints, replace=True)
+        else:
+            choice = np.random.choice(point_cloud.shape[0], self.npoints, replace=False)
+        
+        point_cloud = point_cloud[choice, :]
+
+        # Normalize the point cloud
+        point_cloud = point_cloud - np.mean(point_cloud, axis=0)  # Center the point cloud
+        point_cloud = point_cloud / np.max(np.linalg.norm(point_cloud, axis=1))  # Scale to unit sphere
+
+        # Data augmentation
+        if self.data_augmentation:
+            point_cloud = self._augment(point_cloud)
+
+        point_cloud = point_cloud.astype(np.float32)
+
+        return point_cloud, label
+
+    def _augment(self, point_cloud):
+        # Apply random rotation around the Y-axis
+        theta = np.random.uniform(0, np.pi * 2)
+        rotation_matrix = np.array([[np.cos(theta), 0, np.sin(theta)],
+                                    [0, 1, 0],
+                                    [-np.sin(theta), 0, np.cos(theta)]])
+        point_cloud = point_cloud.dot(rotation_matrix)
+
+        # Apply random jitter
+        point_cloud += np.random.normal(0, 0.02, size=point_cloud.shape)
+        
+        return point_cloud
+
 if __name__ == '__main__':
-    selected_categories = ['flower_pot']    # ['bottle', 'cup', 'flower_pot', 'lamp']
-    dataset = ModelNet40(categories=selected_categories)
+    selected_categories = ['flower_pot']    
+    dataset = PointNetModelNet40(categories=selected_categories)
     print(f"Dataset size: {len(dataset)}")
     point_cloud, label = dataset[0]
     dataset.visualize(0)

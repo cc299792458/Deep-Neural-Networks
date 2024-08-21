@@ -15,8 +15,8 @@ import torch.nn.parallel
 import torch.optim as optim
 import torch.utils.data
 
-from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LambdaLR
 from torchvision.utils import make_grid, save_image
 from torchvision.transforms import Compose, Resize, RandomCrop, RandomHorizontalFlip, ToTensor, Normalize
 
