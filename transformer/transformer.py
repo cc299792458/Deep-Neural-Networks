@@ -7,7 +7,7 @@
 import torch
 import torch.nn as nn
 
-from position_encoding import PositionalEncoding
+from positional_encoding import PositionalEncoding
 
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, d_model, n_head) -> None:

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from position_encoding import SinusoidalPositionEmbeddings
+from positional_encoding import PositionalEncoding
 
 class UNetBlock(nn.Module):
     def __init__(self, input_channels, output_channels, time_embedding_dim, is_upsample=False):
@@ -52,7 +52,7 @@ class UNet(nn.Module):
         
         # Time embedding layer
         self.time_embedding = nn.Sequential(
-            SinusoidalPositionEmbeddings(time_embedding_dim),
+            PositionalEncoding(time_embedding_dim),
             nn.Linear(time_embedding_dim, time_embedding_dim),
             nn.ReLU()
         )
