@@ -35,9 +35,9 @@ class TransformerEmbedding(nn.Module):
 
         return self.drop_out(tok_emb + pos_emb)
 
-class MultiHeadSelfAttention(nn.Module):
+class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, n_head) -> None:
-        super(MultiHeadSelfAttention, self).__init__()
+        super(MultiHeadAttention, self).__init__()
 
         self.d_model = d_model
         self.n_head = n_head
@@ -128,7 +128,7 @@ class PositionwiseFeedForward(nn.Module):
 class EncoderBlock(nn.Module):
     def __init__(self, d_model, ffn_hidden, n_head, drop_prob):
         super(EncoderBlock, self).__init__()
-        self.attention = MultiHeadSelfAttention(d_model=d_model, n_head=n_head)
+        self.attention = MultiHeadAttention(d_model=d_model, n_head=n_head)
         self.norm1 = LayerNorm(d_model=d_model)
         self.dropout1 = nn.Dropout(p=drop_prob)
 
@@ -178,6 +178,48 @@ class Encoder(nn.Module):
 
         return x
 
+class DecoderBlock(nn.Module):
+    def __init__(self, d_model, ffn_hidden, n_head, drop_prob):
+        super(DecoderBlock, self).__init__()
+        self.self_attention = MultiHeadAttention(d_model=d_model, n_head=n_head)
+        self.norm1 = LayerNorm(d_model=d_model)
+        self.dropout1 = nn.Dropout(p=drop_prob)
+
+        self.cross_attention = MultiHeadAttention(d_model=d_model, n_head=n_head)
+        self.norm2 = LayerNorm(d_model=d_model)
+        self.dropout2 = nn.Dropout(p=drop_prob)
+
+        self.ffn = PositionwiseFeedForward(d_model=d_model, hidden=ffn_hidden, drop_prob=drop_prob)
+        self.norm3 = LayerNorm(d_model=d_model)
+        self.dropout3 = nn.Dropout(p=drop_prob)
+
+    def forward(self, x, encoder_output, x_mask, encoder_mask):
+        # 1. Compute self-attention for the input sequence
+        residual = x
+        x = self.self_attention(q=x, k=x, v=x, mask=x_mask)
+        
+        # 2. Add & Norm (Residual connection + LayerNorm)
+        x = self.dropout1(x)
+        x = self.norm1(x + residual)
+
+        if encoder_output is not None:
+            # 3. Compute cross-attention (attending to the encoder output)
+            residual = x
+            x = self.cross_attention(q=x, k=encoder_output, v=encoder_output, mask=encoder_mask)
+            
+            # 4. Add & Norm (Residual connection + LayerNorm)
+            x = self.dropout2(x)
+            x = self.norm2(x + residual)
+
+        # 5. Position-wise feed-forward network
+        residual = x
+        x = self.ffn(x)
+        
+        # 6. Add & Norm (Residual connection + LayerNorm)
+        x = self.dropout3(x)
+        x = self.norm3(x + residual)
+        
+        return x
 
 
 
