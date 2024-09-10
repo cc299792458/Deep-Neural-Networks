@@ -7,6 +7,7 @@
 import torch
 import torch.nn as nn
 
+from layer_norm import LayerNorm
 from positional_encoding import PositionalEncoding
 
 class MultiHeadSelfAttention(nn.Module):
@@ -97,6 +98,36 @@ class PositionwiseFeedForward(nn.Module):
         x = self.dropout(x)
         x = self.linear2(x)
 
+        return x
+    
+class EncoderBlock(nn.Module):
+    def __init__(self, d_model, ffn_hidden, n_head, drop_prob):
+        super(EncoderBlock, self).__init__()
+        self.attention = MultiHeadSelfAttention(d_model=d_model, n_head=n_head)
+        self.norm1 = LayerNorm(d_model=d_model)
+        self.dropout1 = nn.Dropout(p=drop_prob)
+
+        self.ffn = PositionwiseFeedForward(d_model=d_model, hidden=ffn_hidden, drop_prob=drop_prob)
+        self.norm2 = LayerNorm(d_model=d_model)
+        self.dropout2 = nn.Dropout(p=drop_prob)
+
+    def forward(self, x, attention_mask):
+        # Residual connection before self-attention
+        residual = x  
+        x = self.attention(q=x, k=x, v=x, mask=attention_mask)
+        
+        # Add & Norm after attention
+        x = self.dropout1(x)
+        x = self.norm1(x + residual)
+        
+        # Residual connection before feedforward network
+        residual = x  
+        x = self.ffn(x)
+      
+        # Add & Norm after feedforward network
+        x = self.dropout2(x)
+        x = self.norm2(x + residual)
+        
         return x
 
 class Transformer:
