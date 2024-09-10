@@ -156,8 +156,28 @@ class EncoderBlock(nn.Module):
         return x
 
 class Encoder(nn.Module):
-    def __init__():
-        pass
+    def __init__(self, voc_size, max_len, d_model, ffn_hidden, n_head, n_blocks, drop_prob, device):
+        super(Encoder, self).__init__()
+        self.emb = TransformerEmbedding(vocab_size=voc_size, 
+                                        d_model=d_model,
+                                        max_len=max_len,
+                                        drop_prob=drop_prob,
+                                        device=device)
+
+        self.blocks = nn.ModuleList([EncoderBlock(d_model=d_model,
+                                                  ffn_hidden=ffn_hidden,
+                                                  n_head=n_head,
+                                                  drop_prob=drop_prob)
+                                                  for _ in range(n_blocks)])
+    
+    def forward(self, x, attention_mask):
+        x = self.emb(x)
+
+        for block in self.blocks:
+            x = block(x, attention_mask)
+
+        return x
+
 
 
 
