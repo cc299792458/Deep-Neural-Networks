@@ -1,1 +1,1 @@
-from .position_encoding import SinusoidalPositionEmbeddings
+from .position_encoding import PositionalEncoding

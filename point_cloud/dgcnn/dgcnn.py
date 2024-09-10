@@ -4,8 +4,6 @@ import torch.nn.functional as F
 from torch_geometric.nn import DynamicEdgeConv
 from torch_geometric.data import Data, DataLoader
 
-# TODO: Parameterize the network with the network architecture
-
 class DGCNN(nn.Module):
     def __init__(self, k=20, num_classes=10):
         super(DGCNN, self).__init__()
