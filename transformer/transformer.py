@@ -8,7 +8,32 @@ import torch
 import torch.nn as nn
 
 from layer_norm import LayerNorm
+from token_embedding import TokenEmbedding
 from positional_encoding import PositionalEncoding
+
+class TransformerEmbedding(nn.Module):
+    """
+    token embedding + positional encoding (sinusoid)
+    positional encoding can give positional information to network
+    """
+
+    def __init__(self, vocab_size, d_model, max_len, drop_prob, device):
+        """
+        class for word embedding that included positional information
+
+        :param vocab_size: size of vocabulary
+        :param d_model: dimensions of model
+        """
+        super(TransformerEmbedding, self).__init__()
+        self.tok_emb = TokenEmbedding(vocab_size, d_model)
+        self.pos_emb = PositionalEncoding(d_model, max_len, device)
+        self.drop_out = nn.Dropout(p=drop_prob)
+
+    def forward(self, x):
+        tok_emb = self.tok_emb(x)
+        pos_emb = self.pos_emb(x)
+
+        return self.drop_out(tok_emb + pos_emb)
 
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, d_model, n_head) -> None:
@@ -127,8 +152,14 @@ class EncoderBlock(nn.Module):
         # Add & Norm after feedforward network
         x = self.dropout2(x)
         x = self.norm2(x + residual)
-        
+
         return x
+
+class Encoder(nn.Module):
+    def __init__():
+        pass
+
+
 
 class Transformer:
     def __init__(self,

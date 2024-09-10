@@ -19,14 +19,12 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(pos * div_term)  # Apply sin to even indices
         pe[:, 1::2] = torch.cos(pos * div_term)  # Apply cos to odd indices
 
-        # Register as buffer to avoid it being treated as a parameter
+        # Add batch dimension at the front and register as a buffer (not trainable)
         pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
  
     def forward(self, x):
-        # Add positional encodings to input embeddings
-        x = x + self.pe[:, :x.size(1), :]
-        return x
+        return self.pe[:, :x.size(1), :]
 
 def plot_positional_encoding_heatmap(pe_matrix):
     plt.figure(figsize=(10, 8))
