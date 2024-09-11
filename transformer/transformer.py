@@ -6,9 +6,13 @@
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
 
 from layer_norm import LayerNorm
+from utils.misc_utils import set_seed
+from torch.utils.data import DataLoader
 from token_embedding import TokenEmbedding
+from utils.data_utils import Seq2SeqDataset
 from positional_encoding import PositionalEncoding
 
 class TransformerEmbedding(nn.Module):
@@ -234,3 +238,128 @@ class Transformer(nn.Module):
         tgt_sub_mask = torch.tril(torch.ones((tgt_len, tgt_len))).type(torch.ByteTensor).to(self.config['device'])
         tgt_mask = tgt_pad_mask & tgt_sub_mask
         return tgt_mask
+
+if __name__ == '__main__':
+    set_seed()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    ##### 0. Load Dataset and Model #####
+    dataset_name = 'iwslt2017'
+    config_name = 'iwslt2017-en-zh'
+    source_lang = 'en'
+    target_lang = 'zh'
+    model_name = 'Helsinki-NLP/opus-mt-en-zh'
+    batch_size = 32  # Define your batch size
+
+    seq2seq_dataset = Seq2SeqDataset(dataset_name, config_name, source_lang, target_lang, model_name)
+
+    # Load the dataset
+    train_data, val_data, test_data = seq2seq_dataset.load_data()
+
+    # Tokenize the dataset
+    train_data = seq2seq_dataset.prepare_dataset(train_data)
+    val_data = seq2seq_dataset.prepare_dataset(val_data)
+    test_data = seq2seq_dataset.prepare_dataset(test_data)
+
+    # Create DataLoaders #
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
+
+    # Initialize Transformer Model #
+    model = Transformer().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)  # Use Adam optimizer with a learning rate
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)  # Step down LR by gamma every 5 epochs
+    loss_fn = nn.CrossEntropyLoss(ignore_index=model.config['tgt_pad_idx'])  # Cross-entropy loss with padding ignored
+
+    ##### 1. Training Loop #####
+    num_epochs = 10
+    best_val_loss = float('inf')  # Track the best validation loss
+    checkpoint_path = 'best_transformer_model.pth'  # Path to save the best model
+
+    for epoch in range(num_epochs):
+        model.train()  # Set the model to training mode
+        total_loss = 0
+
+        for batch in train_loader:
+            src = batch['input_ids'].to(device)
+            tgt = batch['labels'].to(device)
+
+            tgt_input = tgt[:, :-1]  # Exclude the last token for input
+            tgt_output = tgt[:, 1:]  # Shift right for target
+
+            # Forward pass
+            optimizer.zero_grad()
+            output = model(src, tgt_input)
+
+            # Reshape output and target for loss calculation
+            output = output.reshape(-1, output.size(-1))
+            tgt_output = tgt_output.reshape(-1)
+
+            # Calculate loss
+            loss = loss_fn(output, tgt_output)
+
+            # Backpropagation and optimization step
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_train_loss = total_loss / len(train_loader)
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Training Loss: {avg_train_loss:.4f}')
+
+        ##### Validation Loop #####
+        model.eval()  # Set the model to evaluation mode
+        val_loss = 0
+
+        with torch.no_grad():
+            for batch in val_loader:
+                src = batch['input_ids'].to(device)
+                tgt = batch['labels'].to(device)
+
+                tgt_input = tgt[:, :-1]
+                tgt_output = tgt[:, 1:]
+
+                output = model(src, tgt_input)
+
+                output = output.reshape(-1, output.size(-1))
+                tgt_output = tgt_output.reshape(-1)
+
+                loss = loss_fn(output, tgt_output)
+                val_loss += loss.item()
+
+        avg_val_loss = val_loss / len(val_loader)
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Validation Loss: {avg_val_loss:.4f}')
+
+        ##### Learning Rate Scheduling #####
+        scheduler.step()
+
+        ##### Checkpointing #####
+        # Save the model if the validation loss is the best we've seen so far
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f'New best model saved with validation loss {best_val_loss:.4f}')
+
+    ##### 2. Model Evaluation on Test Set #####
+    model.load_state_dict(torch.load(checkpoint_path))  # Load the best model before evaluation
+    model.eval()
+    test_loss = 0
+
+    with torch.no_grad():
+        for batch in test_loader:
+            src = batch['input_ids'].to(device)
+            tgt = batch['labels'].to(device)
+
+            tgt_input = tgt[:, :-1]
+            tgt_output = tgt[:, 1:]
+
+            output = model(src, tgt_input)
+
+            output = output.reshape(-1, output.size(-1))
+            tgt_output = tgt_output.reshape(-1)
+
+            loss = loss_fn(output, tgt_output)
+            test_loss += loss.item()
+
+    avg_test_loss = test_loss / len(test_loader)
+    print(f'Test Loss: {avg_test_loss:.4f}')
