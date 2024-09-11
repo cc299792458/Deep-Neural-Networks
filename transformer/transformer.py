@@ -4,6 +4,7 @@
     Reference: https://github.com/hyunwoongko/transformer
 """
 
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -248,9 +249,10 @@ if __name__ == '__main__':
     source_lang = 'en'
     target_lang = 'zh'
     model_name = 'Helsinki-NLP/opus-mt-en-zh'
+    max_length = 128
     batch_size = 32  # Define your batch size
 
-    seq2seq_dataset = Seq2SeqDataset(dataset_name, config_name, source_lang, target_lang, model_name)
+    seq2seq_dataset = Seq2SeqDataset(dataset_name, config_name, source_lang, target_lang, model_name, max_length=max_length)
 
     # Load the dataset
     train_data, val_data, test_data = seq2seq_dataset.load_data()
@@ -265,8 +267,20 @@ if __name__ == '__main__':
     val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
+    # Get the padding token ID from the tokenizer
+    pad_token_id = seq2seq_dataset.tokenizer.pad_token_id
+    # Get the start-of-sequence (SOS) token ID
+    sos_token_id = seq2seq_dataset.tokenizer.bos_token_id
+    if sos_token_id is None:
+        sos_token_id = seq2seq_dataset.tokenizer.convert_tokens_to_ids('<s>')  # Fallback if bos_token doesn't exist
+
     # Initialize Transformer Model #
-    model = Transformer().to(device)
+    model_config = {
+        'src_pad_idx': pad_token_id,
+        'tgt_pad_idx': pad_token_id,
+        'tgt_sos_idx': sos_token_id
+    }
+    model = Transformer(config=model_config).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-4)  # Use Adam optimizer with a learning rate
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)  # Step down LR by gamma every 5 epochs
     loss_fn = nn.CrossEntropyLoss(ignore_index=model.config['tgt_pad_idx'])  # Cross-entropy loss with padding ignored
@@ -274,15 +288,21 @@ if __name__ == '__main__':
     ##### 1. Training Loop #####
     num_epochs = 10
     best_val_loss = float('inf')  # Track the best validation loss
-    checkpoint_path = 'best_transformer_model.pth'  # Path to save the best model
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'logs/{dataset_name}/')
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    checkpoint_dir = os.path.join(log_dir, 'checkpoints')
+    checkpoint_path = os.path.join(checkpoint_dir, 'best_transformer_model.pth')
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
 
     for epoch in range(num_epochs):
         model.train()  # Set the model to training mode
         total_loss = 0
 
         for batch in train_loader:
-            src = batch['input_ids'].to(device)
-            tgt = batch['labels'].to(device)
+            src = torch.stack(batch['input_ids']).transpose(0, 1).to(device)
+            tgt = torch.stack(batch['labels']).transpose(0, 1).to(device)
 
             tgt_input = tgt[:, :-1]  # Exclude the last token for input
             tgt_output = tgt[:, 1:]  # Shift right for target
@@ -339,7 +359,7 @@ if __name__ == '__main__':
             best_val_loss = avg_val_loss
             torch.save(model.state_dict(), checkpoint_path)
             print(f'New best model saved with validation loss {best_val_loss:.4f}')
-
+            
     ##### 2. Model Evaluation on Test Set #####
     model.load_state_dict(torch.load(checkpoint_path))  # Load the best model before evaluation
     model.eval()

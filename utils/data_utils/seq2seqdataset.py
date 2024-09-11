@@ -40,8 +40,8 @@ class Seq2SeqDataset:
         source_texts = [example['en'] for example in batch['translation']]
         target_texts = [example['zh'] for example in batch['translation']]
         
-        source = self.tokenizer(source_texts, padding='max_length', truncation=True, max_length=self.max_length)
-        target = self.tokenizer(target_texts, padding='max_length', truncation=True, max_length=self.max_length)
+        source = self.tokenizer(source_texts, padding='max_length', truncation=True, max_length=self.max_length, return_tensors="pt")
+        target = self.tokenizer(target_texts, padding='max_length', truncation=True, max_length=self.max_length, return_tensors="pt")
 
         return {
             "input_ids": source['input_ids'], 
